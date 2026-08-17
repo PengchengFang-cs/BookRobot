@@ -5,4 +5,3 @@
     <chain base_link="body_link" tip_link="fruit_tool"/>
   </group>
 </robot>
-

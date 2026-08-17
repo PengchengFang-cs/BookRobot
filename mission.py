@@ -35,4 +35,3 @@ def run_one_fruit(fruit, vision, navigation, arm, say=print):
     arm.drop()
     say("任务完成，可以再说一种水果")
     return True
-

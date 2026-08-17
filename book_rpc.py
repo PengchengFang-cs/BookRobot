@@ -48,7 +48,11 @@ class BookVisionSettings:
         )
         if any(not isinstance(value, str) or not value.strip() for value in required):
             raise BookVisionError("book_vision_configuration_incomplete")
-        if not np.isfinite(self.timeout_s) or self.timeout_s <= 0:
+        if (
+            not np.isfinite(self.timeout_s)
+            or self.timeout_s <= 0
+            or self.timeout_s > 2.5
+        ):
             raise BookVisionError("book_vision_timeout_invalid")
 
 

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from book_rpc import BookVisionClient, BookVisionSettings
+from book_rpc import BookVisionClient, BookVisionError, BookVisionSettings
 
 
 class _Repeated(list):
@@ -109,6 +109,13 @@ class BookRpcTests(unittest.TestCase):
         )
 
         self.assertEqual([item.confidence for item in result], [0.90, 0.70])
+
+    def test_rejects_deadline_above_service_contract(self):
+        values = dict(self.settings().__dict__)
+        values["timeout_s"] = 2.501
+
+        with self.assertRaisesRegex(BookVisionError, "book_vision_timeout_invalid"):
+            BookVisionSettings(**values).validate()
 
 
 if __name__ == "__main__":
