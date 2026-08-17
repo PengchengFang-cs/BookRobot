@@ -16,6 +16,8 @@ datasets/
 checkpoints/
 models/
 logs/
+generated/
+ros_overlay/
 outputs/
 results/
 *.log

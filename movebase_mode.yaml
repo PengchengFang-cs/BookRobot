@@ -1,0 +1,4 @@
+/fruit_movebase_mode_controller:
+  ros__parameters:
+    joints: [movebase_mode_command]
+    interface_name: mode_command

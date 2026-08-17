@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<robot name="mh2">
+  <!-- 只规划右臂。fruit_tool 是程序加在两指之间的小坐标系。 -->
+  <group name="right_arm">
+    <chain base_link="body_link" tip_link="fruit_tool"/>
+  </group>
+</robot>
+
