@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
+import book_rpc
 from book_rpc import BookVisionClient, BookVisionError, BookVisionSettings
 
 
@@ -116,6 +117,18 @@ class BookRpcTests(unittest.TestCase):
 
         with self.assertRaisesRegex(BookVisionError, "book_vision_timeout_invalid"):
             BookVisionSettings(**values).validate()
+
+    def test_channel_options_allow_one_raw_1080p_frame(self):
+        options = dict(
+            book_rpc.grpc_channel_options("planning-server.bookbot.internal")
+        )
+
+        self.assertEqual(options["grpc.max_send_message_length"], 64 * 1024 * 1024)
+        self.assertEqual(options["grpc.max_receive_message_length"], 16 * 1024 * 1024)
+        self.assertEqual(
+            options["grpc.ssl_target_name_override"],
+            "planning-server.bookbot.internal",
+        )
 
 
 if __name__ == "__main__":

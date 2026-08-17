@@ -15,10 +15,21 @@ from book_geometry import BookMask
 SCENE_TASK = "scene_table_books_segmentation"
 SCENE_PROFILE = "table_books_v1"
 VISION_METHOD = "/bookbot.vision.v2.VisionService/Infer"
+MAX_REQUEST_BYTES = 64 * 1024 * 1024
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
 
 class BookVisionError(RuntimeError):
     pass
+
+
+def grpc_channel_options(server_name):
+    return (
+        ("grpc.ssl_target_name_override", server_name),
+        ("grpc.default_authority", server_name),
+        ("grpc.max_send_message_length", MAX_REQUEST_BYTES),
+        ("grpc.max_receive_message_length", MAX_RESPONSE_BYTES),
+    )
 
 
 @dataclass(frozen=True)
@@ -146,10 +157,7 @@ class BookVisionClient:
         self._channel = grpc.secure_channel(
             self.settings.endpoint,
             credentials,
-            options=(
-                ("grpc.ssl_target_name_override", self.settings.server_name),
-                ("grpc.default_authority", self.settings.server_name),
-            ),
+            options=grpc_channel_options(self.settings.server_name),
         )
         return self._channel.unary_unary(
             VISION_METHOD,
