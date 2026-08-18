@@ -84,7 +84,7 @@ class BookRpcTests(unittest.TestCase):
         request, timeout = calls[0]
         self.assertAlmostEqual(timeout, 2.4)
         self.assertEqual(request.task, "scene_table_books_segmentation")
-        self.assertEqual(request.header.expected_output_frame, "image")
+        self.assertEqual(request.header.expected_output_frame, "image_pixels")
         self.assertEqual(request.header.calibration_version, "wanda-head-rgbd-v1")
         self.assertEqual(request.header.issued_at_ns, 1_000_000_000)
         self.assertEqual(request.header.not_before_ns, 1_000_000_000)

@@ -209,7 +209,7 @@ class BookVisionClient:
         header.issued_at_ns = captured_at_ns
         header.not_before_ns = captured_at_ns
         header.deadline_ns = deadline_ns
-        header.expected_output_frame = "image"
+        header.expected_output_frame = "image_pixels"
         header.config_hash = self.settings.config_hash
         header.calibration_version = self.settings.calibration_version
 
