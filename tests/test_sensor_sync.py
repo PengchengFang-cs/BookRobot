@@ -30,6 +30,25 @@ class SensorSyncTests(unittest.TestCase):
 
         self.assertEqual(synchronizer.joints["body_joint"].maxlen, 512)
 
+    def test_default_accepts_measured_joint_timestamp_offset(self):
+        color_stamp = 6_000_000_000
+        sync = SensorSynchronizer()
+        sync.add_color(message(color_stamp), arrived_at_s=40.0)
+        sync.add_depth(message(color_stamp + 80_000_000), arrived_at_s=40.1)
+        sync.add_info(message(color_stamp), arrived_at_s=40.0)
+        joints = message(color_stamp + 190_000_000)
+        joints.name = ["body_joint", "joint_head0", "joint_head1"]
+        joints.position = [0.2, 0.0, 0.25]
+        sync.add_joints(joints)
+
+        selected = sync.select(
+            arrived_after_s=39.0,
+            captured_after_ns=0,
+            required_joints=("body_joint", "joint_head0", "joint_head1"),
+        )
+
+        self.assertIsNotNone(selected)
+
     def sample(self, stamp_ns, arrived_at_s, **message_values):
         return TimedMessage(
             stamp_ns=stamp_ns,

@@ -117,7 +117,9 @@ class SensorSynchronizer:
         # Wanda runs both streams at 5 Hz; aligned depth currently arrives
         # with a measured ~76 ms timestamp offset from its color frame.
         maximum_rgbd_skew_ns=100_000_000,
-        maximum_joint_skew_ns=100_000_000,
+        # The current Wanda driver stamps joints about 182-187 ms after the
+        # matched head RGB-D capture, measured on 2026-08-18.
+        maximum_joint_skew_ns=250_000_000,
         frame_buffer_size=8,
         joint_buffer_size=512,
     ):
