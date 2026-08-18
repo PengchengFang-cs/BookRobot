@@ -27,6 +27,8 @@
 - 进一步核对 `S1_TABLE_PICK_BOOK` 第 0 帧，确认 DataReplay 的升降起点约为 `0.20 m`。首次对位从 `0.28 m` 开始，却使用 `current + observed_z - reference_z`，违反了旧公式的录制起点前提。FPC 已改为 `0.20 m + observed_z - reference_z`，超出 `[0.0, 0.28] m` 时失败而不裁剪，并以实际 `body_joint` 反馈验证补偿后有效 Z 残差不超过 `3 mm`；56 项本地测试通过。commit `49ef5cac59b1c2b7cdac08782f06e6e2c3879059` 已直接部署到 Wanda，机器人端编译和 13 项纯测试通过，未执行运动。
 - 对右 D01 做只读和非吸附通信排查：FTDI `AR8J81NT` 正常枚举、权限和独占进程正常，服务能写 Modbus 请求，但在已支持的地址和波特率组合下均收到 0 字节。服务重启后故障不变并已恢复运行；问题边界落在 D01 主电源或 FTDI 后端 RS485 物理链路，见 [`BOT-20260818-08`](ROBOT_ISSUES.md#bot-20260818-08)。排查未触发吸附或机器人运动。
 - 根据旧 Pipeline 新的 Stage 1 Z-offset 设计，更正 FPC 职责：导航阶段预置升降柱仍会被 DataReplay 的绝对 `0.20 m` torso 帧覆盖，因此 commit `49ef5ca` 的导航阶段高度补偿只适合独立测试，不是最终抓取链路。FPC 现改为按 X/Y 选书、仅向 `navnav_final` 传 X/Y、固定输出一次 `z_offset_m=observed_z-reference_z`；±30 mm 外在导航前失败，合法 `0.0 m` 保留。commit `da935426c9d0e97d2f409d534082253ab28eb18c` 已直接部署到 Wanda；完整本地 55 项测试、机器人端 15 项纯测试和模块编译通过，未执行运动。机械臂、DataReplay token 和 D01 由另一条工作线负责。
+- 经用户确认现场可运动后，执行第一次 XY-only 真机对位。五本书检测正常，选中目标初始残差 `dx=-0.012 m, dy=-0.025 m, dz=+0.011 m`；执行 4 条 X/Y 底盘命令后重新检测，最终残差 `dx=+0.008 m, dy=+0.023 m, dz=+0.011 m`。输出的 Pipeline 固定 Z offset 始终为 `+0.011 m`；结束后 odom twist 全零且 `body_joint=0.280 m`，本轮未运行升降、机械臂、DataReplay 或吸盘。最终图保存于非 Git 的 `logs/book_alignment_xy_only_20260818.jpg`；XY 精度问题见 [`BOT-20260818-09`](ROBOT_ISSUES.md#bot-20260818-09)。
+- 用户完成吸盘现场处理后，只读 D01 状态确认右侧 `available=true`、`communication_ok=true`、`healthy=true`、`attachment_state=idle`、`last_error=null`；`BOT-20260818-08` 更新为已解决。本次状态查询未启动吸附。
 
 ## 2026-08-17（Asia/Shanghai）
 

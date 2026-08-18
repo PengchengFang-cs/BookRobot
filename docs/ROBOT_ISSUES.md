@@ -146,7 +146,7 @@
 - **标题**：右 D01 吸盘 Modbus 请求无回包
 - **首次发现**：2026-08-18（Asia/Shanghai）
 - **最近更新**：2026-08-18（Asia/Shanghai）
-- **状态**：等待现场处理
+- **状态**：已解决
 - **现象与影响**：`dual-d01-control` 服务在线，但右侧报告 `available=false`、`communication_ok=false`、`healthy=false` 和 `attachment_state=communication_lost`，因此当前不能测试吸附。
 - **复现/上下文**：服务使用右侧 FTDI `AR8J81NT` 对应的 `/dev/ttyUSB1`；错误为 `ModbusTimeoutError: serial timeout after 0 of 3 expected bytes`。
 - **确认事实与证据**：
@@ -155,6 +155,24 @@
   - 未占用的另一侧 FTDI 也没有 D01 回包；一次干净服务重启没有改变结果。
   - 排查完成后 `dual-d01-control.service` 已恢复 active/running；未发送吸附 start、控制寄存器写入或机器人运动命令。
 - **根因或假设**：软件侧证据把故障边界缩小到 FTDI 转换器下游。D01 主电源未上电、RS485 A/B/地线或插头断开均与现象一致；远程软件检查不能在这些物理原因之间唯一判定。
-- **处理**：等待现场确认 D01 主电源和指示灯，并检查右侧 FTDI 到吸盘的 RS485 A/B、地线和插头。
-- **验证**：现场恢复后服务应自动重连；用只读 `client.py status --side right` 确认 `available=true`、`communication_ok=true` 和 `healthy=true` 后，才进入独立吸附/释放测试。
-- **剩余工作/链接**：现场物理链路恢复；当前状态见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md#当前问题)。
+- **处理**：用户完成现场处理，D01 服务自动恢复与右吸盘通信。
+- **验证**：只读 `client.py status --side right` 返回 `available=true`、`communication_ok=true`、`healthy=true`、`attachment_state=idle` 和 `last_error=null`。未发送吸附 start。
+- **剩余工作/链接**：通信故障已关闭；真实吸附/释放测试由机械臂与吸盘工作线安排。
+
+## BOT-20260818-09
+
+- **标题**：离散底盘 XY 对位不能达到 4 mm 精度
+- **首次发现**：2026-08-18（Asia/Shanghai）
+- **最近更新**：2026-08-18（Asia/Shanghai）
+- **状态**：待解决
+- **现象与影响**：XY/Z 分流后的第一次真机测试执行成功，但一次离散对位后仍有 `dx=+0.008 m, dy=+0.023 m`，不能作为 4 mm 抓取对位结果。
+- **复现/上下文**：机器人静止检测的初始残差为 `dx=-0.012 m, dy=-0.025 m`；旧 `navnav_final` 通过转向、横移等效动作、转回和前后移动执行 4 条命令，再拍摄一次验收图。
+- **确认事实与证据**：
+  - 五本书在移动前后均成功检测，固定目标的视觉 Z offset 都约为 `+0.011 m`。
+  - 导航只收到 reference Z，没有执行 torso 命令；结束时 `body_joint=0.280 m`。
+  - 结束时 odom 的线速度和角速度均为零，不是尚未停稳时读取的残差。
+  - 本轮没有运行机械臂、DataReplay 或吸盘。
+- **根因或假设**：多个离散旋转和平移动作会分别引入轮胎回差和航向误差；当前一次结果支持“现有结构精度不足”，但不足以把 23 mm 残差唯一归因于某一个动作或传感器。
+- **处理**：尚未修改。候选方案是连续 SE(2) 微对位，或让底盘进入 8–10 mm 包络后由机械臂消费最终残差。
+- **验证**：后续方案至少应保存初始/最终 X/Y、最新 IMU yaw、odom 位移和停止状态；4 mm 成功标准需要按独立测试设计重复验证。
+- **剩余工作/链接**：确定连续微对位与机械臂残差补偿的职责边界。当前状态见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md#正在进行)。
