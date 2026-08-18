@@ -31,6 +31,10 @@ if [[ " $* " != *" --check "* ]] && \
   "$DIR/release_base.sh"
 fi
 
+if [[ " $* " == *" --book-align "* ]]; then
+  exec python3 "$DIR/main.py" "$@"
+fi
+
 python3 "$DIR/prepare_moveit.py"
 mkdir -p "$DIR/logs"
 

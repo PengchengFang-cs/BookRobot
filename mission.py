@@ -1,6 +1,43 @@
-"""把四块积木按顺序接起来。这里就是整个任务的大脑。"""
+"""把感知、移动和动作积木按任务顺序接起来。"""
 
+from dataclasses import dataclass
+
+from book_alignment import select_alignment_book
 from config import SCAN_ANGLE_RAD, SCAN_COUNT
+
+
+@dataclass(frozen=True)
+class BookAlignmentRun:
+    initial: object
+    final: object
+    command_count: int
+
+
+def _format_residual(label, target):
+    dx, dy, dz = target.residual_m
+    return f"{label}: dx={dx:.3f} m, dy={dy:.3f} m, dz={dz:.3f} m"
+
+
+def run_book_alignment_once(vision, navigator, say=print):
+    """Align one detected book to the recorded DataReplay pick point."""
+
+    initial = select_alignment_book(vision.find("book", frame="base_link"))
+    say(
+        "选择吸取点 "
+        f"x={initial.observed_m[0]:.3f}, "
+        f"y={initial.observed_m[1]:.3f}, "
+        f"z={initial.observed_m[2]:.3f}"
+    )
+    say(_format_residual("初始偏差", initial))
+    command_count = navigator.align(
+        reference=initial.reference_m,
+        observed=initial.observed_m,
+    )
+    say(f"导航对位动作完成，共执行 {command_count} 条 Y/Z/X 命令")
+
+    final = select_alignment_book(vision.find("book", frame="base_link"))
+    say(_format_residual("最终偏差", final))
+    return BookAlignmentRun(initial, final, command_count)
 
 
 def run_one_fruit(fruit, vision, navigation, arm, say=print):

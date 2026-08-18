@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from mission import run_one_fruit
+from mission import run_book_alignment_once, run_one_fruit
 
 
 class _Vision:
@@ -43,6 +43,15 @@ class _Arm:
         pass
 
 
+class _AlignmentNavigator:
+    def __init__(self):
+        self.calls = []
+
+    def align(self, *, reference, observed):
+        self.calls.append((reference, observed))
+        return 3
+
+
 class MissionMultiBookTests(unittest.TestCase):
     def test_legacy_single_pick_uses_first_book_from_list(self):
         map_book = SimpleNamespace(suction_point=(1.0, 0.2, 0.8))
@@ -67,6 +76,47 @@ class MissionMultiBookTests(unittest.TestCase):
         self.assertFalse(result)
         self.assertEqual(arm.picks, [])
         self.assertEqual(navigation.home_calls, 1)
+
+
+class BookAlignmentMissionTests(unittest.TestCase):
+    def test_detects_aligns_and_measures_again(self):
+        initial_far = SimpleNamespace(suction_point=(1.08, 0.31, 0.77))
+        initial_near = SimpleNamespace(suction_point=(1.01, -0.33, 0.76))
+        final_near = SimpleNamespace(suction_point=(0.915, -0.317, 0.756))
+        vision = _Vision([[initial_far, initial_near], [final_near]])
+        vision.frames = []
+        original_find = vision.find
+
+        def record_find(target, frame):
+            vision.frames.append(frame)
+            return original_find(target, frame)
+
+        vision.find = record_find
+        navigator = _AlignmentNavigator()
+        messages = []
+
+        result = run_book_alignment_once(vision, navigator, say=messages.append)
+
+        self.assertEqual(vision.frames, ["base_link", "base_link"])
+        self.assertIs(result.initial.book, initial_near)
+        self.assertIs(result.final.book, final_near)
+        self.assertEqual(result.command_count, 3)
+        self.assertEqual(
+            navigator.calls,
+            [(result.initial.reference_m, result.initial.observed_m)],
+        )
+        self.assertTrue(any("初始偏差" in message for message in messages))
+        self.assertTrue(any("最终偏差" in message for message in messages))
+
+    def test_rejects_empty_initial_detection(self):
+        vision = _Vision([[]])
+
+        with self.assertRaisesRegex(RuntimeError, "没有检测到可对位的书本"):
+            run_book_alignment_once(
+                vision,
+                _AlignmentNavigator(),
+                say=lambda _message: None,
+            )
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import argparse
 import sys
 
 from geometry import fruit_from_text
-from mission import run_one_fruit
+from mission import run_book_alignment_once, run_one_fruit
 
 
 def arguments():
@@ -39,6 +39,11 @@ def arguments():
         action="store_true",
         help="在空中执行一次完整抓取动作",
     )
+    parser.add_argument(
+        "--book-align",
+        action="store_true",
+        help="检测书本并对位到 DataReplay 固定抓取点，不抓取",
+    )
     return parser.parse_args()
 
 
@@ -53,7 +58,6 @@ def run_real(args):
     import rclpy
     from rclpy.node import Node
 
-    from arm import Arm
     from navigation import Navigation
     from vision import Vision
     from voice import Voice
@@ -63,9 +67,25 @@ def run_real(args):
     navigation = Navigation(node)
     vision = Vision(node, navigation.tf_buffer)
     voice = Voice(node)
-    arm = Arm(node, vision.right_arm_positions)
+    arm = None
 
     try:
+        if args.book_align:
+            from book_navigation import BookAlignmentNavigator
+
+            voice.say("请打开遥控器并按一下机身释放键")
+            navigation.wait_for_release()
+            run_book_alignment_once(
+                vision,
+                BookAlignmentNavigator(),
+                voice.say,
+            )
+            print(f"[视觉] 调试图: {vision.debug_path}")
+            return
+
+        from arm import Arm
+
+        arm = Arm(node, vision.right_arm_positions)
         navigation.remember_home()
         arm.remember_stow()
 
@@ -141,10 +161,11 @@ def run_real(args):
             if args.once:
                 break
     finally:
-        try:
-            arm.restore_controller()
-        except Exception as error:
-            print(f"[提示] 双臂控制器没有自动恢复: {error}", file=sys.stderr)
+        if arm is not None:
+            try:
+                arm.restore_controller()
+            except Exception as error:
+                print(f"[提示] 双臂控制器没有自动恢复: {error}", file=sys.stderr)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
