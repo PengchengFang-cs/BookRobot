@@ -66,23 +66,29 @@ class BookRpcTests(unittest.TestCase):
                 scene_instances=[_scene_row(confidence=0.91)],
             )
 
-        client = BookVisionClient(self.settings(), pb2_module=_FakePb2, rpc=rpc)
+        client = BookVisionClient(
+            self.settings(),
+            pb2_module=_FakePb2,
+            rpc=rpc,
+            clock_ns=lambda: 1_100_000_000,
+        )
         image = np.arange(48 * 64 * 3, dtype=np.uint8).reshape((48, 64, 3))
 
         result = client.detect(
             image,
-            captured_at_ns=123456,
+            captured_at_ns=1_000_000_000,
             base_motion_epoch="base-static-1",
             head_motion_epoch="head-static-1",
         )
 
         request, timeout = calls[0]
-        self.assertEqual(timeout, 2.5)
+        self.assertAlmostEqual(timeout, 2.4)
         self.assertEqual(request.task, "scene_table_books_segmentation")
         self.assertEqual(request.header.expected_output_frame, "image")
         self.assertEqual(request.header.calibration_version, "wanda-head-rgbd-v1")
-        self.assertEqual(request.header.not_before_ns, 123456)
-        self.assertGreaterEqual(request.header.issued_at_ns, 123456)
+        self.assertEqual(request.header.issued_at_ns, 1_000_000_000)
+        self.assertEqual(request.header.not_before_ns, 1_000_000_000)
+        self.assertEqual(request.header.deadline_ns, 3_500_000_000)
         self.assertEqual(request.captures[0].camera_id, "head_rgbd")
         self.assertEqual(request.captures[0].color.encoding, "bgr8")
         self.assertEqual(request.captures[0].color.payload, image.tobytes())
@@ -103,15 +109,36 @@ class BookRpcTests(unittest.TestCase):
                 ],
             )
 
-        client = BookVisionClient(self.settings(), pb2_module=_FakePb2, rpc=rpc)
+        client = BookVisionClient(
+            self.settings(),
+            pb2_module=_FakePb2,
+            rpc=rpc,
+            clock_ns=lambda: 1_100_000_000,
+        )
         result = client.detect(
             np.zeros((48, 64, 3), dtype=np.uint8),
-            captured_at_ns=1,
+            captured_at_ns=1_000_000_000,
             base_motion_epoch="base-1",
             head_motion_epoch="head-1",
         )
 
         self.assertEqual([item.confidence for item in result], [0.90, 0.70])
+
+    def test_rejects_capture_after_its_absolute_deadline(self):
+        client = BookVisionClient(
+            self.settings(),
+            pb2_module=_FakePb2,
+            rpc=lambda request, timeout: None,
+            clock_ns=lambda: 4_000_000_000,
+        )
+
+        with self.assertRaisesRegex(BookVisionError, "book_vision_capture_expired"):
+            client.detect(
+                np.zeros((48, 64, 3), dtype=np.uint8),
+                captured_at_ns=1_000_000_000,
+                base_motion_epoch="base-1",
+                head_motion_epoch="head-1",
+            )
 
     def test_rejects_deadline_above_service_contract(self):
         values = dict(self.settings().__dict__)

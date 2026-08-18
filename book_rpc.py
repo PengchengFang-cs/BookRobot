@@ -93,12 +93,15 @@ def _read_bytes(path, label):
 
 
 class BookVisionClient:
-    def __init__(self, settings, *, pb2_module=None, rpc=None):
+    def __init__(self, settings, *, pb2_module=None, rpc=None, clock_ns=time.time_ns):
         if not isinstance(settings, BookVisionSettings):
             raise TypeError("settings must be BookVisionSettings")
         settings.validate()
         self.settings = settings
         self.pb2 = pb2_module or _load_pb2(settings.protobuf_directory)
+        if not callable(clock_ns):
+            raise TypeError("clock_ns must be callable")
+        self._clock_ns = clock_ns
         self._channel = None
         self._rpc = rpc or self._build_rpc()
         self._sequence = 0
@@ -185,7 +188,11 @@ class BookVisionClient:
             raise BookVisionError("book_vision_motion_epoch_missing")
 
         self._sequence += 1
-        now_ns = time.time_ns()
+        now_ns = self._clock_ns()
+        lifetime_ns = int(self.settings.timeout_s * 1_000_000_000)
+        deadline_ns = captured_at_ns + lifetime_ns
+        if now_ns >= deadline_ns:
+            raise BookVisionError("book_vision_capture_expired")
         request_id = f"fruittest-{uuid.uuid4()}"
         capture_id = f"head-{captured_at_ns}"
         request = self.pb2.InferRequest()
@@ -196,11 +203,12 @@ class BookVisionClient:
         header.request_id = request_id
         header.correlation_id = request_id
         header.sequence = self._sequence
-        header.issued_at_ns = now_ns
-        # The server's capture gate requires the image timestamp to be inside
-        # [not_before_ns, server_now]. The image necessarily predates this RPC.
+        # The reviewed service requires issued <= not_before <= capture <= now.
+        # This request is born from one already-captured image, so its lifetime
+        # starts at that capture rather than at the later RPC construction time.
+        header.issued_at_ns = captured_at_ns
         header.not_before_ns = captured_at_ns
-        header.deadline_ns = now_ns + int(self.settings.timeout_s * 1_000_000_000)
+        header.deadline_ns = deadline_ns
         header.expected_output_frame = "image"
         header.config_hash = self.settings.config_hash
         header.calibration_version = self.settings.calibration_version
@@ -240,8 +248,11 @@ class BookVisionClient:
             base_motion_epoch=base_motion_epoch,
             head_motion_epoch=head_motion_epoch,
         )
+        remaining_s = (request.header.deadline_ns - self._clock_ns()) / 1_000_000_000
+        if remaining_s <= 0:
+            raise BookVisionError("book_vision_capture_expired")
         try:
-            response = self._rpc(request, timeout=self.settings.timeout_s)
+            response = self._rpc(request, timeout=min(self.settings.timeout_s, remaining_s))
         except Exception as error:
             raise BookVisionError("book_vision_rpc_failed") from error
         if getattr(response, "task", None) != SCENE_TASK:
