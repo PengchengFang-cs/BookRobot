@@ -23,6 +23,7 @@ from config import (
     VISION_TIMEOUT_S,
 )
 from geometry import apply_ros_transform, camera_point_to_base
+from sensor_sync import SensorSynchronizer
 
 
 class Vision:
@@ -36,6 +37,8 @@ class Vision:
         self.color_time = 0.0
         self.depth_time = 0.0
         self.joints = {}
+        self.sensor_sync = SensorSynchronizer()
+        self.last_capture_ns = -1
         self.book_client = book_client or BookVisionClient.from_config()
 
         sensor_qos = rclpy.qos.qos_profile_sensor_data
@@ -59,15 +62,19 @@ class Vision:
     def _color(self, message):
         self.color = message
         self.color_time = time.monotonic()
+        self.sensor_sync.add_color(message, arrived_at_s=self.color_time)
 
     def _depth(self, message):
         self.depth = message
         self.depth_time = time.monotonic()
+        self.sensor_sync.add_depth(message, arrived_at_s=self.depth_time)
 
     def _info(self, message):
         self.info = message
+        self.sensor_sync.add_info(message, arrived_at_s=time.monotonic())
 
     def _joints(self, message):
+        self.sensor_sync.add_joints(message)
         for name, value in zip(message.name, message.position):
             if np.isfinite(value):
                 self.joints[name] = float(value)
@@ -118,68 +125,77 @@ class Vision:
         )
         cv2.imwrite(str(self.debug_path), color)
 
-    def _detect_once(self):
-        color = self.bridge.imgmsg_to_cv2(self.color, desired_encoding="bgr8")
-        depth = self.bridge.imgmsg_to_cv2(self.depth, desired_encoding="passthrough")
+    def _detect_once(self, snapshot, joints):
+        color = self.bridge.imgmsg_to_cv2(snapshot.color, desired_encoding="bgr8")
+        depth = self.bridge.imgmsg_to_cv2(snapshot.depth, desired_encoding="passthrough")
         if color.shape[:2] != depth.shape[:2]:
             return None
         depth = depth.astype(float)
-        if self.depth.encoding.upper() == "16UC1":
+        if snapshot.depth.encoding.upper() == "16UC1":
             depth /= 1000.0
 
-        needed = ("body_joint", "joint_head0", "joint_head1")
-        if not all(name in self.joints for name in needed):
-            return None
-        body = self.joints["body_joint"]
-        head_yaw = self.joints["joint_head0"]
-        head_pitch = self.joints["joint_head1"]
-        stamp = self.color.header.stamp
-        captured_at_ns = int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
-        if captured_at_ns <= 0:
-            captured_at_ns = time.time_ns()
+        body = joints["body_joint"]
+        head_yaw = joints["joint_head0"]
+        head_pitch = joints["joint_head1"]
+        captured_at_ns = snapshot.captured_at_ns
 
-        return detect_book_frame(
+        geometry = detect_book_frame(
             book_client=self.book_client,
             color_bgr=color,
             depth_m=depth,
             intrinsics=CameraIntrinsics(
-                fx=float(self.info.k[0]),
-                fy=float(self.info.k[4]),
-                cx=float(self.info.k[2]),
-                cy=float(self.info.k[5]),
+                fx=float(snapshot.info.k[0]),
+                fy=float(snapshot.info.k[4]),
+                cx=float(snapshot.info.k[2]),
+                cy=float(snapshot.info.k[5]),
             ),
             camera_to_base=lambda point: camera_point_to_base(
                 point, body, head_yaw, head_pitch
             ),
             captured_at_ns=captured_at_ns,
-            base_motion_epoch="fruittest-base-static-1",
-            head_motion_epoch=(
-                f"fruittest-head-{body:.6f}-{head_yaw:.6f}-{head_pitch:.6f}"
-            ),
+            base_motion_epoch=f"fruittest-base-capture-{captured_at_ns}",
+            head_motion_epoch=f"fruittest-head-capture-{captured_at_ns}",
             on_result=lambda observation, geometry: self._save_debug_overlay(
                 color, observation, geometry
             ),
         )
+        if geometry is None:
+            return None
+        return geometry, captured_at_ns
 
     def find(self, target="book", frame="map"):
         if target != "book":
             raise ValueError(f"当前视觉只支持书本，不支持: {target}")
         started = time.monotonic()
         deadline = started + VISION_TIMEOUT_S
+        needed_joints = ("body_joint", "joint_head0", "joint_head1")
         while rclpy.ok() and time.monotonic() < deadline:
             rclpy.spin_once(self.node, timeout_sec=0.10)
-            fresh = self.color_time >= started and self.depth_time >= started
-            if not fresh or self.color is None or self.depth is None or self.info is None:
+            selected = self.sensor_sync.select(
+                arrived_after_s=started,
+                captured_after_ns=self.last_capture_ns,
+                required_joints=needed_joints,
+            )
+            if selected is None:
                 continue
+            snapshot, joints = selected
+            # Consume before the RPC so a no-book result waits for a new frame
+            # instead of repeatedly sending the identical capture.
+            self.last_capture_ns = snapshot.captured_at_ns
             try:
-                geometry = self._detect_once()
-                if geometry is None:
+                detected = self._detect_once(snapshot, joints)
+                if detected is None:
                     continue
+                geometry, captured_at_ns = detected
                 point_base = geometry.suction_point
                 if frame == "base_link":
                     result = point_base
                 elif frame == "map":
-                    tf = self.tf_buffer.lookup_transform("map", "base_link", Time())
+                    tf = self.tf_buffer.lookup_transform(
+                        "map",
+                        "base_link",
+                        Time(nanoseconds=captured_at_ns),
+                    )
                     result = apply_ros_transform(point_base, tf.transform)
                 else:
                     raise ValueError(f"不支持的坐标系: {frame}")
