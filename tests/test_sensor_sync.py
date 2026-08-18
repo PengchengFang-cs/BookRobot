@@ -25,6 +25,11 @@ def message(stamp_ns, *, frame="head_rgbd_color_optical_frame", width=1920, heig
 
 
 class SensorSyncTests(unittest.TestCase):
+    def test_default_joint_history_covers_delayed_camera_delivery(self):
+        synchronizer = SensorSynchronizer()
+
+        self.assertEqual(synchronizer.joints["body_joint"].maxlen, 512)
+
     def sample(self, stamp_ns, arrived_at_s, **message_values):
         return TimedMessage(
             stamp_ns=stamp_ns,

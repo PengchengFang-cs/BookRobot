@@ -119,7 +119,7 @@ class SensorSynchronizer:
         maximum_rgbd_skew_ns=100_000_000,
         maximum_joint_skew_ns=100_000_000,
         frame_buffer_size=8,
-        joint_buffer_size=64,
+        joint_buffer_size=512,
     ):
         self.maximum_rgbd_skew_ns = int(maximum_rgbd_skew_ns)
         self.maximum_joint_skew_ns = int(maximum_joint_skew_ns)
