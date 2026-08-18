@@ -1,0 +1,113 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+import numpy as np
+
+from book_geometry import CameraIntrinsics
+from replay_pick_reference import (
+    ReplayPickReference,
+    find_blue_suction_center,
+    load_replay_pick_reference,
+    project_recorded_contact,
+    save_replay_pick_reference,
+    scale_intrinsics,
+)
+
+
+class ReplayPickReferenceTests(unittest.TestCase):
+    def test_scales_x_and_y_intrinsics_independently(self):
+        scaled = scale_intrinsics(
+            CameraIntrinsics(1000.0, 900.0, 960.0, 540.0),
+            source_size=(1920, 1080),
+            target_size=(224, 224),
+        )
+
+        self.assertAlmostEqual(scaled.fx, 1000.0 * 224.0 / 1920.0)
+        self.assertAlmostEqual(scaled.fy, 900.0 * 224.0 / 1080.0)
+        self.assertAlmostEqual(scaled.cx, 960.0 * 224.0 / 1920.0)
+        self.assertAlmostEqual(scaled.cy, 540.0 * 224.0 / 1080.0)
+
+    def test_finds_largest_new_blue_component_inside_roi(self):
+        baseline = np.zeros((40, 60, 3), dtype=np.uint8)
+        contact = baseline.copy()
+        contact[4:8, 4:8] = (0, 0, 255)
+        contact[20:30, 35:45] = (0, 0, 255)
+
+        center = find_blue_suction_center(
+            baseline_rgb=baseline,
+            contact_rgb=contact,
+            roi_xywh=(30, 15, 20, 20),
+        )
+
+        self.assertEqual(center, (39.5, 24.5))
+
+    def test_rejects_contact_frame_without_new_blue_component(self):
+        image = np.zeros((20, 20, 3), dtype=np.uint8)
+
+        with self.assertRaisesRegex(ValueError, "blue_suction_not_found"):
+            find_blue_suction_center(
+                baseline_rgb=image,
+                contact_rgb=image.copy(),
+                roi_xywh=(0, 0, 20, 20),
+            )
+
+    def test_projects_early_depth_frames_and_uses_axis_median(self):
+        depths = []
+        for millimetres in (900, 1000, 1100):
+            depth = np.zeros((5, 5), dtype=np.uint16)
+            depth[:, :] = millimetres
+            depths.append(depth)
+
+        result = project_recorded_contact(
+            center_px=(2.0, 1.0),
+            depths_mm=depths,
+            intrinsics=CameraIntrinsics(2.0, 2.0, 0.0, 0.0),
+            torso_head_states=[(0.2, 0.0, 0.25)] * 3,
+            camera_to_base=lambda point, *_state: point,
+        )
+
+        self.assertEqual(result.sample_count, 3)
+        np.testing.assert_allclose(
+            result.reference_contact_base_m,
+            (1.0, 0.5, 1.0),
+            atol=1e-12,
+        )
+        np.testing.assert_allclose(
+            result.axis_spread_m,
+            (0.2, 0.1, 0.2),
+            atol=1e-12,
+        )
+
+    def test_rejects_projection_when_all_depth_patches_are_empty(self):
+        with self.assertRaisesRegex(ValueError, "recorded_contact_depth_missing"):
+            project_recorded_contact(
+                center_px=(2.0, 2.0),
+                depths_mm=[np.zeros((5, 5), dtype=np.uint16)],
+                intrinsics=CameraIntrinsics(2.0, 2.0, 0.0, 0.0),
+                torso_head_states=[(0.2, 0.0, 0.25)],
+                camera_to_base=lambda point, *_state: point,
+            )
+
+    def test_reference_json_round_trip_preserves_numeric_types(self):
+        reference = ReplayPickReference(
+            asset_id="S1_TABLE_PICK_BOOK",
+            contact_frame_index=300,
+            early_frame_indices=(0, 10, 20, 40, 80),
+            suction_center_px=(164.17, 196.70),
+            reference_contact_base_m=(0.715, -0.391, 0.713),
+            long_inset_m=0.075,
+            right_inset_m=0.042,
+            sample_count=5,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reference.json"
+            save_replay_pick_reference(path, reference)
+
+            loaded = load_replay_pick_reference(path)
+
+        self.assertEqual(loaded, reference)
+
+
+if __name__ == "__main__":
+    unittest.main()
