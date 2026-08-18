@@ -44,14 +44,14 @@ Stage 1 抓书不再把 `0.48 m` 当作最终抓取坐标。当前流程分成�
   -> 0.48 m 只用于进入粗略工作范围
   -> 停稳后重新拍摄并用 odom/IMU 重关联同一本书
   -> 读取 config/stage1_pick_reference.json
-  -> 当前书的 13 cm / 10 cm 点减去录制吸盘固定参考
+  -> 当前书的 13 cm / 10 cm 点减去第 0 帧录制书本点
   -> X/Y 底盘对位，Z 平移整条 Pick torso 轨迹
   -> 才执行 DataReplay
 ```
 
-参考 JSON 来自只读 Pick HDF5：第 300 帧蓝色吸盘中心对应回第
-`0,10,20,40,80` 帧无遮挡深度，再变换到录制时的 `base_link`。标定命令
-只读取录制数据、调用书本视觉并生成 JSON/叠加图，不发送机器人运动命令：
+参考 JSON 来自只读 Pick HDF5：直接对第 0 帧运行当前整书 mask、深度和
+13 cm/10 cm 抓取点算法，再变换到录制时的 `base_link`。标定命令只读取
+录制数据、调用书本视觉并生成 JSON/叠加图，不发送机器人运动命令：
 
 ```bash
 python3 scripts/calibrate_replay_pick_reference.py \
@@ -64,7 +64,7 @@ python3 scripts/calibrate_replay_pick_reference.py \
 
 如果已经由遥控器完成粗定位，使用 `./run.sh --book-pick --book-skip-coarse --book-align-mode vector`。该入口不会执行旧 `0.48 m` 粗移动，只从当前位置做一次 DataReplay 精对位、复测并执行一次 Pick。
 
-当前资产的固定参考是 `base_link=(0.7709968,-0.3608004,0.7538117) m`。这只是 DataReplay 吸盘落点；五本书分别使用各自实时视觉算出的 0.13/0.10 抓取点与它做差，因此一条单书录制轨迹可以逐本复用。
+当前资产的固定参考是 DataReplay 第 0 帧录制书本的 0.13/0.10 抓取点：`base_link=(0.9355794,-0.3037484,0.7538117) m`。运行时将当前书的同类抓取点与它做差，使底盘恢复到回放开始时的书—机器人相对位置；第 300 帧不参与底盘对位。
 
 运行前还需要满足：
 

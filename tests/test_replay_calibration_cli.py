@@ -21,9 +21,7 @@ class ReplayCalibrationCliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--h5", result.stdout)
-        self.assertIn("--contact-frame", result.stdout)
-        self.assertIn("--early-frames", result.stdout)
-        self.assertIn("--suction-roi", result.stdout)
+        self.assertIn("--reference-frame", result.stdout)
         self.assertIn("--output", result.stdout)
         self.assertIn("--overlay", result.stdout)
 

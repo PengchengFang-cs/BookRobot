@@ -1,6 +1,6 @@
 # DataReplay Image-Based Precise Docking Implementation Plan
 
-> **Executed correction (2026-08-18):** Real HDF5 evidence superseded the planned replay-book local-inset transfer. The implemented calibration finds the confirmed blue suction tip/book contact pixel `(159, 180)`, intersects its ray with the recorded cover plane, and stores only the fixed replay suction reference `(0.7709968, -0.3608004, 0.7538117) m`. Runtime precision uses `current_book.suction_point - replay_suction_reference`; all local-inset tasks below are historical planning text and are not part of the final implementation.
+> **Final executed correction (2026-08-18):** Base docking recreates the robot/book relationship at DataReplay frame 0; it must not align the current book directly to the frame-300 suction contact. The implemented calibration runs the current whole-book 13 cm/10 cm geometry on frame 0 and stores `(0.9355794, -0.3037484, 0.7538117) m`. Runtime uses `current_book.suction_point - recorded_frame0_book.suction_point`. All blue-tip/contact and local-inset tasks below are historical planning text and are not part of the final implementation.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

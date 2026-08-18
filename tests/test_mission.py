@@ -104,12 +104,8 @@ def _book(point):
 def _reference():
     return ReplayPickReference(
         asset_id="S1_TABLE_PICK_BOOK",
-        contact_frame_index=300,
-        early_frame_indices=(0, 10, 20, 40, 80),
-        suction_center_px=(164.17, 196.70),
-        reference_contact_base_m=(0.715, -0.391, 0.713),
-        sample_count=5,
-        axis_spread_m=(0.001, 0.001, 0.002),
+        reference_frame_index=0,
+        recorded_book_suction_point_base_m=(0.715, -0.391, 0.713),
     )
 
 
@@ -179,7 +175,10 @@ class BookAlignmentMissionTests(unittest.TestCase):
         self.assertIs(result.precise.book, after_coarse)
         self.assertIs(result.final.book, final)
         self.assertAlmostEqual(navigator.calls[0][0][0], 0.48)
-        self.assertEqual(navigator.calls[1][0], _reference().reference_contact_base_m)
+        self.assertEqual(
+            navigator.calls[1][0],
+            _reference().recorded_book_suction_point_base_m,
+        )
         self.assertAlmostEqual(result.z_offset_m, 0.010)
         self.assertTrue(result.xy_within_tolerance)
         self.assertTrue(any("0.48 m 粗定位" in message for message in messages))
@@ -232,7 +231,10 @@ class BookAlignmentMissionTests(unittest.TestCase):
 
         self.assertEqual(vision.frames, ["base_link", "base_link"])
         self.assertEqual(len(navigator.calls), 1)
-        self.assertEqual(navigator.calls[0][0], _reference().reference_contact_base_m)
+        self.assertEqual(
+            navigator.calls[0][0],
+            _reference().recorded_book_suction_point_base_m,
+        )
         self.assertIs(result.precise.book, target)
         self.assertIs(result.final.book, final_target)
         self.assertIsNone(result.coarse)

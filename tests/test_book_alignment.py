@@ -38,12 +38,8 @@ def _book(point):
 def _reference(**changes):
     values = dict(
         asset_id="S1_TABLE_PICK_BOOK",
-        contact_frame_index=300,
-        early_frame_indices=(0, 10, 20, 40, 80),
-        suction_center_px=(164.17, 196.70),
-        reference_contact_base_m=(0.715, -0.391, 0.713),
-        sample_count=5,
-        axis_spread_m=(0.001, 0.001, 0.002),
+        reference_frame_index=0,
+        recorded_book_suction_point_base_m=(0.715, -0.391, 0.713),
     )
     values.update(changes)
     return ReplayPickReference(**values)
@@ -70,16 +66,21 @@ class BookAlignmentTests(unittest.TestCase):
         )
 
         expected_observed = book.suction_point
-        self.assertEqual(target.reference_m, reference.reference_contact_base_m)
+        self.assertEqual(
+            target.reference_m,
+            reference.recorded_book_suction_point_base_m,
+        )
         self.assertNotEqual(target.reference_m[0], APPROACH_DISTANCE_M)
         self.assertEqual(target.observed_m, expected_observed)
         np.testing.assert_allclose(
             target.residual_m,
-            np.asarray(expected_observed) - np.asarray(reference.reference_contact_base_m),
+            np.asarray(expected_observed)
+            - np.asarray(reference.recorded_book_suction_point_base_m),
         )
         self.assertAlmostEqual(
             target.z_offset_m,
-            expected_observed[2] - reference.reference_contact_base_m[2],
+            expected_observed[2]
+            - reference.recorded_book_suction_point_base_m[2],
         )
 
     def test_predicts_same_book_in_new_base_with_inverse_se2_motion(self):
@@ -94,7 +95,7 @@ class BookAlignmentTests(unittest.TestCase):
 
     def test_reassociates_nearest_predicted_book_not_nearest_replay_reference(self):
         reference = _reference(
-            reference_contact_base_m=(0.70, -0.39, 0.72),
+            recorded_book_suction_point_base_m=(0.70, -0.39, 0.72),
         )
         same_book = _book((0.91, -0.10, 0.72))
         distractor = _book((0.70, -0.39, 0.72))
@@ -108,7 +109,9 @@ class BookAlignmentTests(unittest.TestCase):
         self.assertIs(selected, same_book)
 
     def test_rejects_precise_z_offset_outside_thirty_millimetres(self):
-        reference = _reference(reference_contact_base_m=(0.715, -0.391, 0.70))
+        reference = _reference(
+            recorded_book_suction_point_base_m=(0.715, -0.391, 0.70)
+        )
         book = _book((0.80, -0.30, 0.731))
 
         with self.assertRaisesRegex(RuntimeError, "Z 偏移.*0.030"):

@@ -42,13 +42,11 @@ def _csv_ints(value, *, count=None):
 
 def arguments(argv=None):
     parser = argparse.ArgumentParser(
-        description="Read a Pick HDF5 and calibrate its blue suction contact; no motion."
+        description="Detect the recorded book suction point at replay frame 0; no motion."
     )
     parser.add_argument("--h5", required=True, help="read-only DataReplay HDF5")
     parser.add_argument("--asset-id", default="S1_TABLE_PICK_BOOK")
-    parser.add_argument("--contact-frame", type=int, default=300)
-    parser.add_argument("--early-frames", default="0,10,20,40,80")
-    parser.add_argument("--suction-roi", default="145,170,45,54")
+    parser.add_argument("--reference-frame", type=int, default=0)
     parser.add_argument(
         "--output",
         default=str(ROOT / "config" / "stage1_pick_reference.json"),
@@ -87,23 +85,18 @@ def _write_overlay(h5_path, reference, output_path):
 
     with h5py.File(h5_path, "r") as recording:
         images = recording["observation/image"]
-        early = np.asarray(images[reference.early_frame_indices[0]])[:, :, ::-1].copy()
-        contact = np.asarray(images[reference.contact_frame_index])[:, :, ::-1].copy()
-    center = tuple(int(round(value)) for value in reference.suction_center_px)
-    for image, label in ((early, "early projection"), (contact, "blue suction")):
-        cv2.circle(image, center, 5, (0, 0, 255), 2)
-        cv2.putText(
-            image,
-            label,
-            (5, 18),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
-            (0, 255, 255),
-            1,
-            cv2.LINE_AA,
-        )
-    overlay = np.concatenate((early, contact), axis=1)
-    xyz = reference.reference_contact_base_m
+        overlay = np.asarray(images[reference.reference_frame_index])[:, :, ::-1].copy()
+    cv2.putText(
+        overlay,
+        f"DataReplay reference frame {reference.reference_frame_index}",
+        (5, 18),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 255, 255),
+        1,
+        cv2.LINE_AA,
+    )
+    xyz = reference.recorded_book_suction_point_base_m
     cv2.putText(
         overlay,
         f"base=({xyz[0]:.4f},{xyz[1]:.4f},{xyz[2]:.4f})m",
@@ -122,18 +115,14 @@ def _write_overlay(h5_path, reference, output_path):
 
 def main(argv=None):
     args = arguments(argv)
-    early_frames = _csv_ints(args.early_frames)
-    suction_roi = _csv_ints(args.suction_roi, count=4)
     client = BookVisionClient.from_config()
     try:
         reference = calibrate_replay_pick_reference(
             h5_path=args.h5,
             asset_id=args.asset_id,
-            contact_frame_index=args.contact_frame,
-            early_frame_indices=early_frames,
+            reference_frame_index=args.reference_frame,
             source_intrinsics=SOURCE_INTRINSICS,
             source_size=SOURCE_SIZE,
-            suction_roi_xywh=suction_roi,
             detect_recorded_book=_detector(client),
             camera_to_base=camera_point_to_base,
         )
@@ -143,9 +132,10 @@ def main(argv=None):
     _write_overlay(args.h5, reference, args.overlay)
     print(f"reference={args.output}")
     print(f"overlay={args.overlay}")
-    print(f"suction_center_px={reference.suction_center_px}")
-    print(f"reference_contact_base_m={reference.reference_contact_base_m}")
-    print(f"axis_spread_m={reference.axis_spread_m}")
+    print(
+        "recorded_book_suction_point_base_m="
+        f"{reference.recorded_book_suction_point_base_m}"
+    )
 
 
 if __name__ == "__main__":

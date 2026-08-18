@@ -60,11 +60,9 @@ class ReplayPickReferenceTests(unittest.TestCase):
             result = calibrate_replay_pick_reference(
                 h5_path=path,
                 asset_id="S1_TABLE_PICK_BOOK",
-                contact_frame_index=3,
-                early_frame_indices=(0, 1, 2),
+                reference_frame_index=0,
                 source_intrinsics=CameraIntrinsics(10.0, 10.0, 10.0, 10.0),
                 source_size=(20, 20),
-                suction_roi_xywh=(10, 8, 10, 8),
                 detect_recorded_book=lambda *_args: SimpleNamespace(
                     observation=observation,
                     geometry=geometry,
@@ -72,14 +70,12 @@ class ReplayPickReferenceTests(unittest.TestCase):
                 camera_to_base=lambda point, *_state: point,
             )
 
-        self.assertEqual(result.contact_frame_index, 3)
-        self.assertEqual(result.early_frame_indices, (0, 1, 2))
-        self.assertEqual(result.suction_center_px, (13.0, 11.5))
+        self.assertEqual(result.reference_frame_index, 0)
         np.testing.assert_allclose(
-            result.reference_contact_base_m, (0.30, 0.15, 1.0), atol=1e-12
+            result.recorded_book_suction_point_base_m,
+            (0.35, 0.25, 1.0),
+            atol=1e-12,
         )
-        self.assertEqual(result.sample_count, 3)
-        self.assertEqual(result.axis_spread_m, (0.0, 0.0, 0.0))
 
     def test_scales_x_and_y_intrinsics_independently(self):
         scaled = scale_intrinsics(
@@ -194,12 +190,8 @@ class ReplayPickReferenceTests(unittest.TestCase):
     def test_reference_json_round_trip_preserves_numeric_types(self):
         reference = ReplayPickReference(
             asset_id="S1_TABLE_PICK_BOOK",
-            contact_frame_index=300,
-            early_frame_indices=(0, 10, 20, 40, 80),
-            suction_center_px=(164.17, 196.70),
-            reference_contact_base_m=(0.715, -0.391, 0.713),
-            sample_count=5,
-            axis_spread_m=(0.001, 0.002, 0.003),
+            reference_frame_index=0,
+            recorded_book_suction_point_base_m=(0.935, -0.304, 0.754),
         )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "reference.json"

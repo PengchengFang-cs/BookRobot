@@ -20,12 +20,8 @@ class ProjectedReplayContact:
 @dataclass(frozen=True)
 class ReplayPickReference:
     asset_id: str
-    contact_frame_index: int
-    early_frame_indices: tuple[int, ...]
-    suction_center_px: tuple[float, float]
-    reference_contact_base_m: tuple[float, float, float]
-    sample_count: int
-    axis_spread_m: tuple[float, float, float]
+    reference_frame_index: int
+    recorded_book_suction_point_base_m: tuple[float, float, float]
 
 
 def scale_intrinsics(intrinsics, *, source_size, target_size):
@@ -282,19 +278,17 @@ def calibrate_replay_pick_reference(
     *,
     h5_path,
     asset_id,
-    contact_frame_index,
-    early_frame_indices,
+    reference_frame_index,
     source_intrinsics,
     source_size,
-    suction_roi_xywh,
     detect_recorded_book,
     camera_to_base,
 ):
-    """Build one asset-specific replay reference from a read-only recording."""
+    """Detect the recorded book suction point at the replay start frame."""
 
     import h5py
 
-    early_indices = tuple(int(value) for value in early_frame_indices)
+    frame_index = int(reference_frame_index)
     with h5py.File(h5_path, "r") as recording:
         images = recording["observation/image"]
         depths = recording["observations/depth_head_rgbd"]
@@ -305,48 +299,23 @@ def calibrate_replay_pick_reference(
             source_size=source_size,
             target_size=(int(images.shape[2]), int(images.shape[1])),
         )
-        states = [
-            (
-                float(torsos[index, 0]),
-                float(heads[index, 0]),
-                float(heads[index, 1]),
-            )
-            for index in early_indices
-        ]
-        first = early_indices[0]
         detected_book = detect_recorded_book(
-            images[first],
-            depths[first],
+            images[frame_index],
+            depths[frame_index],
             intrinsics,
-            float(torsos[first, 0]),
-            (float(heads[first, 0]), float(heads[first, 1])),
+            float(torsos[frame_index, 0]),
+            (
+                float(heads[frame_index, 0]),
+                float(heads[frame_index, 1]),
+            ),
         )
-        book_mask = decode_bbox_rle(
-            image_shape=(int(images.shape[1]), int(images.shape[2])),
-            bbox=detected_book.observation.bbox,
-            counts=detected_book.observation.rle_counts,
-        )
-        center = find_blue_book_contact_pixel(
-            baseline_rgb=images[first],
-            contact_rgb=images[int(contact_frame_index)],
-            roi_xywh=suction_roi_xywh,
-            book_mask=book_mask,
-        )
-        projected = project_recorded_contact_to_cover(
-            center_px=center,
-            intrinsics=intrinsics,
-            torso_head_states=states,
-            cover_z_base_m=detected_book.geometry.suction_point[2],
-            camera_to_base=camera_to_base,
-        )
+        point = tuple(float(value) for value in detected_book.geometry.suction_point)
+        if len(point) != 3 or not all(math.isfinite(value) for value in point):
+            raise ValueError("recorded_book_suction_point_invalid")
     return ReplayPickReference(
         asset_id=str(asset_id),
-        contact_frame_index=int(contact_frame_index),
-        early_frame_indices=early_indices,
-        suction_center_px=center,
-        reference_contact_base_m=projected.reference_contact_base_m,
-        sample_count=projected.sample_count,
-        axis_spread_m=projected.axis_spread_m,
+        reference_frame_index=frame_index,
+        recorded_book_suction_point_base_m=point,
     )
 
 
@@ -364,12 +333,9 @@ def load_replay_pick_reference(path):
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     return ReplayPickReference(
         asset_id=str(payload["asset_id"]),
-        contact_frame_index=int(payload["contact_frame_index"]),
-        early_frame_indices=tuple(int(value) for value in payload["early_frame_indices"]),
-        suction_center_px=tuple(float(value) for value in payload["suction_center_px"]),
-        reference_contact_base_m=tuple(
-            float(value) for value in payload["reference_contact_base_m"]
+        reference_frame_index=int(payload["reference_frame_index"]),
+        recorded_book_suction_point_base_m=tuple(
+            float(value)
+            for value in payload["recorded_book_suction_point_base_m"]
         ),
-        sample_count=int(payload["sample_count"]),
-        axis_spread_m=tuple(float(value) for value in payload["axis_spread_m"]),
     )

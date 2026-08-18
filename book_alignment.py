@@ -56,7 +56,7 @@ def build_replay_alignment_target(*, book, replay_reference):
     """Build the precise target from one asset's recorded contact geometry."""
 
     observed = _point3(book.suction_point)
-    reference = _point3(replay_reference.reference_contact_base_m)
+    reference = _point3(replay_reference.recorded_book_suction_point_base_m)
     residual = tuple(observed[index] - reference[index] for index in range(3))
     z_offset_m = residual[2]
     if abs(z_offset_m) > STAGE1_MAX_Z_OFFSET_M:
@@ -72,7 +72,7 @@ def select_replay_book(books, *, replay_reference):
 
     if not books:
         raise RuntimeError("没有检测到可精确对位的书本")
-    reference = _point3(replay_reference.reference_contact_base_m)
+    reference = _point3(replay_reference.recorded_book_suction_point_base_m)
     candidates = []
     for book in books:
         point = _point3(book.suction_point)
