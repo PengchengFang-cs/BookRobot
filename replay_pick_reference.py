@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from book_geometry import CameraIntrinsics
+from book_geometry import CameraIntrinsics, insets_for_contact_point
 
 
 @dataclass(frozen=True)
@@ -27,6 +27,7 @@ class ReplayPickReference:
     long_inset_m: float
     right_inset_m: float
     sample_count: int
+    axis_spread_m: tuple[float, float, float]
 
 
 def scale_intrinsics(intrinsics, *, source_size, target_size):
@@ -182,6 +183,77 @@ def project_recorded_contact(
     )
 
 
+def calibrate_replay_pick_reference(
+    *,
+    h5_path,
+    asset_id,
+    contact_frame_index,
+    early_frame_indices,
+    source_intrinsics,
+    source_size,
+    suction_roi_xywh,
+    detect_recorded_book,
+    camera_to_base,
+):
+    """Build one asset-specific replay reference from a read-only recording."""
+
+    import h5py
+
+    early_indices = tuple(int(value) for value in early_frame_indices)
+    with h5py.File(h5_path, "r") as recording:
+        images = recording["observation/image"]
+        depths = recording["observations/depth_head_rgbd"]
+        heads = recording["observations/qpos_head"]
+        torsos = recording["observations/qpos_torso"]
+        center = find_blue_suction_center(
+            baseline_rgb=images[early_indices[0]],
+            contact_rgb=images[int(contact_frame_index)],
+            roi_xywh=suction_roi_xywh,
+        )
+        intrinsics = scale_intrinsics(
+            source_intrinsics,
+            source_size=source_size,
+            target_size=(int(images.shape[2]), int(images.shape[1])),
+        )
+        projected = project_recorded_contact(
+            center_px=center,
+            depths_mm=[depths[index] for index in early_indices],
+            intrinsics=intrinsics,
+            torso_head_states=[
+                (
+                    float(torsos[index, 0]),
+                    float(heads[index, 0]),
+                    float(heads[index, 1]),
+                )
+                for index in early_indices
+            ],
+            camera_to_base=camera_to_base,
+        )
+        first = early_indices[0]
+        book = detect_recorded_book(
+            images[first],
+            depths[first],
+            intrinsics,
+            float(torsos[first, 0]),
+            (float(heads[first, 0]), float(heads[first, 1])),
+        )
+    long_inset, right_inset = insets_for_contact_point(
+        book,
+        projected.reference_contact_base_m,
+    )
+    return ReplayPickReference(
+        asset_id=str(asset_id),
+        contact_frame_index=int(contact_frame_index),
+        early_frame_indices=early_indices,
+        suction_center_px=center,
+        reference_contact_base_m=projected.reference_contact_base_m,
+        long_inset_m=long_inset,
+        right_inset_m=right_inset,
+        sample_count=projected.sample_count,
+        axis_spread_m=projected.axis_spread_m,
+    )
+
+
 def save_replay_pick_reference(path, reference):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -205,4 +277,5 @@ def load_replay_pick_reference(path):
         long_inset_m=float(payload["long_inset_m"]),
         right_inset_m=float(payload["right_inset_m"]),
         sample_count=int(payload["sample_count"]),
+        axis_spread_m=tuple(float(value) for value in payload["axis_spread_m"]),
     )

@@ -2,11 +2,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import h5py
 import numpy as np
 
-from book_geometry import CameraIntrinsics
+from book_geometry import BookGeometry, CameraIntrinsics
 from replay_pick_reference import (
     ReplayPickReference,
+    calibrate_replay_pick_reference,
     find_blue_suction_center,
     load_replay_pick_reference,
     project_recorded_contact,
@@ -16,6 +18,58 @@ from replay_pick_reference import (
 
 
 class ReplayPickReferenceTests(unittest.TestCase):
+    def test_calibrates_reference_from_synthetic_hdf5(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pick.h5"
+            images = np.zeros((4, 20, 20, 3), dtype=np.uint8)
+            images[3, 10:14, 10:14] = (0, 0, 255)
+            depths = np.full((4, 20, 20), 1000, dtype=np.uint16)
+            with h5py.File(path, "w") as recording:
+                recording.create_dataset("observation/image", data=images)
+                recording.create_dataset(
+                    "observations/depth_head_rgbd", data=depths
+                )
+                recording.create_dataset(
+                    "observations/qpos_head", data=np.zeros((4, 2))
+                )
+                recording.create_dataset(
+                    "observations/qpos_torso", data=np.zeros((4, 1))
+                )
+
+            geometry = BookGeometry(
+                suction_point=(0.20, 0.20, 1.0),
+                long_axis=(1.0, 0.0, 0.0),
+                short_axis_right_to_left=(0.0, 1.0, 0.0),
+                long_extent_m=0.30,
+                short_extent_m=0.20,
+                confidence=0.9,
+                long_inset_m=0.13,
+                right_inset_m=0.10,
+            )
+
+            result = calibrate_replay_pick_reference(
+                h5_path=path,
+                asset_id="S1_TABLE_PICK_BOOK",
+                contact_frame_index=3,
+                early_frame_indices=(0, 1, 2),
+                source_intrinsics=CameraIntrinsics(10.0, 10.0, 10.0, 10.0),
+                source_size=(20, 20),
+                suction_roi_xywh=(8, 8, 8, 8),
+                detect_recorded_book=lambda *_args: geometry,
+                camera_to_base=lambda point, *_state: point,
+            )
+
+        self.assertEqual(result.contact_frame_index, 3)
+        self.assertEqual(result.early_frame_indices, (0, 1, 2))
+        self.assertEqual(result.suction_center_px, (11.5, 11.5))
+        np.testing.assert_allclose(
+            result.reference_contact_base_m, (0.15, 0.15, 1.0), atol=1e-12
+        )
+        self.assertAlmostEqual(result.long_inset_m, 0.08)
+        self.assertAlmostEqual(result.right_inset_m, 0.05)
+        self.assertEqual(result.sample_count, 3)
+        self.assertEqual(result.axis_spread_m, (0.0, 0.0, 0.0))
+
     def test_scales_x_and_y_intrinsics_independently(self):
         scaled = scale_intrinsics(
             CameraIntrinsics(1000.0, 900.0, 960.0, 540.0),
@@ -99,6 +153,7 @@ class ReplayPickReferenceTests(unittest.TestCase):
             long_inset_m=0.075,
             right_inset_m=0.042,
             sample_count=5,
+            axis_spread_m=(0.001, 0.002, 0.003),
         )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "reference.json"
