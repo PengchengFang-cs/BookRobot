@@ -144,8 +144,9 @@ class _Status:
 
 
 class _ReplayAdapter:
-    def __init__(self, episode):
+    def __init__(self, episode, reported_frames=None):
         self.episode = episode
+        self.reported_frames = reported_frames
         self.assets = {
             "S1_TABLE_PICK_BOOK": {
                 "file": "/readonly/pick.h5",
@@ -180,11 +181,16 @@ class _ReplayAdapter:
         self, _module, episode, entry, asset_id, context, _deadline, before
     ):
         self.run_calls.append((episode, entry, asset_id, context, before))
-        self.frames_sent += episode.num_frames
+        frames = (
+            episode.num_frames
+            if self.reported_frames is None
+            else self.reported_frames
+        )
+        self.frames_sent += frames
         return SimpleNamespace(
             status=_Status("SUCCESS"),
             detail="published",
-            data={"frames_sent": episode.num_frames},
+            data={"frames_sent": frames},
         )
 
     def _check(self, block, context):
@@ -199,6 +205,7 @@ class _TorsoAdapter:
     def __init__(self):
         self.commands = []
         self.stopped = False
+        self.destroyed = False
 
     def preflight(self):
         pass
@@ -211,6 +218,9 @@ class _TorsoAdapter:
 
     def stop(self):
         self.stopped = True
+
+    def destroy_node(self):
+        self.destroyed = True
 
 
 class _NavRuntime:
@@ -229,9 +239,9 @@ class _NavRuntime:
 
 
 class LegacyV3PickRuntimeTests(unittest.TestCase):
-    def _runtime(self):
-        episode = _episode([0.212, 0.222, 0.232])
-        replay_adapter = _ReplayAdapter(episode)
+    def _runtime(self, frame_count=607, reported_frames=None):
+        episode = _episode([0.212] * frame_count)
+        replay_adapter = _ReplayAdapter(episode, reported_frames=reported_frames)
         context = SimpleNamespace(load_state=SimpleNamespace(value="EMPTY_READY"))
         pick_block = SimpleNamespace(step_id="S1-B1-02")
         check_block = SimpleNamespace(step_id="S1-B1-03")
@@ -260,6 +270,13 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
         self.assertTrue(precision)
         self.assertAlmostEqual(actual, 0.211)
         self.assertTrue(nav.adapter.stopped)
+        self.assertTrue(nav.adapter.destroyed)
+
+    def test_rejects_pick_asset_that_is_not_exactly_607_frames(self):
+        runtime, _replay, _nav, _episode_value = self._runtime(frame_count=606)
+
+        with self.assertRaisesRegex(RuntimeError, "607"):
+            runtime.load_episode()
 
     def test_replays_only_pick_with_base_disabled_and_frame_300_d01_event(self):
         runtime, replay, _nav, episode = self._runtime()
@@ -267,7 +284,7 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
 
         evidence = runtime.replay_pick(episode)
 
-        self.assertEqual(evidence.frames_sent, 3)
+        self.assertEqual(evidence.frames_sent, 607)
         self.assertEqual(len(replay.run_calls), 1)
         sent_episode, entry, asset_id, _context, before = replay.run_calls[0]
         self.assertIs(sent_episode, episode)
@@ -278,6 +295,13 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
             [{"frame_index": 300, "command": "right_suction_start"}],
         )
         self.assertEqual(before, 0)
+
+    def test_rejects_success_result_that_did_not_publish_all_607_frames(self):
+        runtime, _replay, _nav, episode = self._runtime(reported_frames=606)
+        runtime.load_episode()
+
+        with self.assertRaisesRegex(RuntimeError, "607"):
+            runtime.replay_pick(episode)
 
     def test_confirms_pick_check_and_closes_command_stream(self):
         runtime, replay, _nav, _episode_value = self._runtime()

@@ -17,6 +17,7 @@ TORSO_MAX_M = 0.3
 V3_ROOT = Path("/home/unix_ai/WHRC")
 V3_CONFIG_PATH = V3_ROOT / "v3_pipeline/config/v3_robot_stage1.json"
 PICK_ASSET_ID = "S1_TABLE_PICK_BOOK"
+PICK_FRAME_COUNT = 607
 
 
 def _finite_offset(value):
@@ -101,6 +102,10 @@ class LegacyV3PickRuntime:
     def load_episode(self):
         module = self.replay_adapter._load_module()
         episode = module.HDF5EpisodeLoader.load(str(self.entry["file"]))
+        if int(getattr(episode, "num_frames", -1)) != PICK_FRAME_COUNT:
+            raise RuntimeError(
+                f"Stage-1 Pick asset must contain exactly {PICK_FRAME_COUNT} frames"
+            )
         validation = module.DataValidator.validate(episode)
         if getattr(validation, "valid", False) is not True:
             if self.entry.get("contract_validation_only") is not True:
@@ -132,7 +137,10 @@ class LegacyV3PickRuntime:
             adapter.execute_command(command, precision_mode=True)
             return float(adapter.current_torso_position())
         finally:
-            adapter.stop()
+            try:
+                adapter.stop()
+            finally:
+                adapter.destroy_node()
 
     def replay_pick(self, episode):
         if self.entry.get("allow_base_motion") is not False:
@@ -158,6 +166,12 @@ class LegacyV3PickRuntime:
         frames = int(getattr(result, "data", {}).get(
             "frames_sent", self.replay_adapter.frames_sent - before
         ))
+        actual_frames = int(self.replay_adapter.frames_sent) - before
+        if frames != PICK_FRAME_COUNT or actual_frames != PICK_FRAME_COUNT:
+            raise RuntimeError(
+                f"Stage-1 Pick must publish all {PICK_FRAME_COUNT} frames; "
+                f"reported={frames}, actual={actual_frames}"
+            )
         return ReplayPublishEvidence(frames_sent=frames)
 
     def confirm_holding(self):
