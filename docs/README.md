@@ -4,7 +4,7 @@
 
 ## Agent 必读顺序
 
-1. 先读工作区根目录的 `AGENTS.md`，确认允许写入的位置、远端操作边界和真机安全要求。该文件由运行环境提供，可能不属于仓库提交。
+1. 先读工作区根目录的 `AGENTS.md`，确认允许写入的位置、远端操作边界和真机安全要求。
 2. 再读 [`PROJECT_MAINLINE.md`](PROJECT_MAINLINE.md)，了解项目目标、5090 与 Wanda 的职责以及部署方式。
 3. 然后读 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)，了解当前进度、未解决问题和下一步。
 4. 根据任务查阅路线图、故障档案、工作日志或具体设计与实施计划。
@@ -17,6 +17,7 @@
 - [`ROADMAP.md`](ROADMAP.md)：阶段顺序、状态和完成依据。
 - [`ROBOT_ISSUES.md`](ROBOT_ISSUES.md)：带稳定编号的永久机器人故障档案。
 - [`WORKLOG.md`](WORKLOG.md)：按日期记录的重要操作、结果和判断。
+- [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md)：5090、Wanda、项目路径和直接部署方式。
 
 ## 历史与详细设计
 
@@ -24,6 +25,8 @@
 - [2026-08-17 FruitTest 书本感知实施计划](superpowers/plans/2026-08-17-fruittest-book-perception.md)
 - [2026-08-18 FPC 项目记录体系设计](superpowers/specs/2026-08-18-project-records-design.md)
 - [2026-08-18 FPC 项目记录体系实施计划](superpowers/plans/2026-08-18-project-records.md)
+- [2026-08-18 单仓库直接部署设计](superpowers/specs/2026-08-18-single-repo-deployment-design.md)
+- [2026-08-18 单仓库直接部署实施计划](superpowers/plans/2026-08-18-single-repo-deployment.md)
 
 设计和实施计划保存具体方案与任务拆分，不代替当前状态、故障档案或安全规则。
 

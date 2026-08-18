@@ -25,9 +25,11 @@ FPC 当前基于 FruitTest 的可废弃副本，分阶段验证书本视觉和�
 
 ## 部署与备份
 
-正常部署方向是从 RTX 5090 的 `/home/cvailab/fpc` 通过 SSH 更新 Wanda 的 `/home/unix_ai/fpc`。部署前必须确认两端 Git 工作树干净且更新可以 fast-forward；不满足时停止部署并先处理差异。
+正常部署方向是从 RTX 5090 的 `/home/cvailab/fpc` 通过 `scripts/deploy_to_robot.sh` 直接更新 Wanda 的 `/home/unix_ai/fpc`。部署源必须是本地干净的 `main`，脚本只导出已提交文件。
 
-GitHub 仓库 `PengchengFang-cs/BookRobot` 是公开备份，不是部署通道。Wanda 不从 GitHub pull；远端不可用也不应改变 5090 经 SSH 向 Wanda 部署的路径。
+Wanda 的 `/home/unix_ai/fpc` 是普通运行副本，不是 Git 工作树，不需要 clone、pull 或 fast-forward。脚本默认不删除机器人额外的日志、模型、缓存或其他运行文件。服务器地址、用户、目录和命令见 [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md)。
+
+GitHub 仓库 `PengchengFang-cs/BookRobot` 是公开备份，不是部署通道。部署脚本不自动 push GitHub，Wanda 也不从 GitHub pull。
 
 备份中只包含可公开提交的源码和文档。密码、密钥、令牌、证书、数据集、模型、日志和缓存均不得进入 Git。
 
