@@ -7,6 +7,7 @@ from book_alignment import (
     predict_book_after_base_motion,
     reassociate_book,
     select_coarse_book,
+    select_replay_book,
 )
 from config import SCAN_ANGLE_RAD, SCAN_COUNT
 
@@ -115,21 +116,77 @@ def run_book_alignment_once(vision, navigator, replay_reference, say=print):
     )
 
 
+def run_book_alignment_from_current_once(
+    vision,
+    navigator,
+    replay_reference,
+    say=print,
+):
+    """Skip coarse approach and precisely dock from the current base pose."""
+
+    current_book = select_replay_book(
+        vision.find("book", frame="base_link"),
+        replay_reference=replay_reference,
+    )
+    precise = build_replay_alignment_target(
+        book=current_book,
+        replay_reference=replay_reference,
+    )
+    say(_format_residual("当前位置 DataReplay 精确偏差", precise))
+    precise_navigation = navigator.align(
+        reference=precise.reference_m,
+        observed=precise.observed_m,
+    )
+    say(_format_navigation("精确对位运动反馈", precise_navigation))
+
+    predicted_final = predict_book_after_base_motion(
+        precise.observed_m,
+        odom_dx_m=precise_navigation.odom_dx_m,
+        odom_dy_m=precise_navigation.odom_dy_m,
+        imu_dyaw_rad=precise_navigation.imu_dyaw_rad,
+    )
+    final_book = reassociate_book(
+        vision.find("book", frame="base_link"),
+        predicted_point_m=predicted_final,
+        replay_reference=replay_reference,
+    )
+    final = build_replay_alignment_target(
+        book=final_book,
+        replay_reference=replay_reference,
+    )
+    say(_format_residual("最终 DataReplay 残差", final))
+    xy_within_tolerance = (
+        abs(final.residual_m[0]) <= BOOK_ALIGNMENT_XY_TOLERANCE_M
+        and abs(final.residual_m[1]) <= BOOK_ALIGNMENT_XY_TOLERANCE_M
+    )
+    say(f"XY验收={'达标' if xy_within_tolerance else '未达标'}")
+    return BookAlignmentRun(
+        coarse=None,
+        precise=precise,
+        final=final,
+        coarse_navigation=None,
+        precise_navigation=precise_navigation,
+        z_offset_m=precise.z_offset_m,
+        xy_within_tolerance=xy_within_tolerance,
+    )
+
+
 def run_book_pick_once(
     vision,
     navigator,
     replayer,
     replay_reference,
     say=print,
+    skip_coarse=False,
 ):
     """Align one book, apply the fixed Z handoff, and replay one Pick."""
 
-    alignment = run_book_alignment_once(
-        vision,
-        navigator,
-        replay_reference,
-        say=say,
+    align = (
+        run_book_alignment_from_current_once
+        if skip_coarse
+        else run_book_alignment_once
     )
+    alignment = align(vision, navigator, replay_reference, say=say)
     say("开始按固定 Z 偏移执行 Stage-1 Pick DataReplay")
     replay = replayer.pick(alignment.z_offset_m)
     say(

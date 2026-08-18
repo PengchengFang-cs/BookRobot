@@ -2,7 +2,12 @@ import unittest
 from types import SimpleNamespace
 
 from book_geometry import BookGeometry
-from mission import run_book_alignment_once, run_book_pick_once, run_one_fruit
+from mission import (
+    run_book_alignment_from_current_once,
+    run_book_alignment_once,
+    run_book_pick_once,
+    run_one_fruit,
+)
 from replay_pick_reference import ReplayPickReference
 
 
@@ -210,6 +215,47 @@ class BookAlignmentMissionTests(unittest.TestCase):
             )
 
         self.assertEqual(navigator.calls, [])
+
+    def test_current_position_mode_skips_coarse_and_runs_only_precise_alignment(self):
+        target = _book((0.785, -0.380, 0.723))
+        other = _book((0.900, 0.250, 0.724))
+        final_target = _book((0.716, -0.390, 0.723))
+        vision = _Vision([[other, target], [final_target]])
+        navigator = _AlignmentNavigator([_nav_result(0.070, 0.010)])
+
+        result = run_book_alignment_from_current_once(
+            vision,
+            navigator,
+            _reference(),
+            say=lambda _message: None,
+        )
+
+        self.assertEqual(vision.frames, ["base_link", "base_link"])
+        self.assertEqual(len(navigator.calls), 1)
+        self.assertEqual(navigator.calls[0][0], _reference().reference_contact_base_m)
+        self.assertIs(result.precise.book, target)
+        self.assertIs(result.final.book, final_target)
+        self.assertIsNone(result.coarse)
+        self.assertIsNone(result.coarse_navigation)
+
+    def test_pick_can_start_from_current_position_without_coarse_alignment(self):
+        target = _book((0.785, -0.380, 0.723))
+        final_target = _book((0.716, -0.390, 0.723))
+        vision = _Vision([[target], [final_target]])
+        navigator = _AlignmentNavigator([_nav_result(0.070, 0.010)])
+        replayer = _PickReplayer()
+
+        result = run_book_pick_once(
+            vision,
+            navigator,
+            replayer,
+            _reference(),
+            say=lambda _message: None,
+            skip_coarse=True,
+        )
+
+        self.assertEqual(len(navigator.calls), 1)
+        self.assertEqual(replayer.offsets, [result.alignment.precise.z_offset_m])
 
 
 if __name__ == "__main__":

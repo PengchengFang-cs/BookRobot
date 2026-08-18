@@ -67,6 +67,21 @@ def build_replay_alignment_target(*, book, replay_reference):
     return BookAlignmentTarget(book, reference, observed, residual, z_offset_m)
 
 
+def select_replay_book(books, *, replay_reference):
+    """Choose the current book whose suction point is nearest the replay pose."""
+
+    if not books:
+        raise RuntimeError("没有检测到可精确对位的书本")
+    reference = _point3(replay_reference.reference_contact_base_m)
+    candidates = []
+    for book in books:
+        point = _point3(book.suction_point)
+        dx = point[0] - reference[0]
+        dy = point[1] - reference[1]
+        candidates.append((dx * dx + dy * dy, book))
+    return min(candidates, key=lambda row: row[0])[1]
+
+
 def predict_book_after_base_motion(
     point,
     *,

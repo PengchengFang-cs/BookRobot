@@ -34,6 +34,23 @@ class MainArgumentTests(unittest.TestCase):
         self.assertTrue(args.book_pick)
         self.assertEqual(args.book_align_mode, "vector")
 
+    def test_accepts_skip_coarse_for_current_position_pick(self):
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "main.py",
+                "--book-pick",
+                "--book-skip-coarse",
+                "--book-align-mode",
+                "vector",
+            ],
+        ):
+            args = arguments()
+
+        self.assertTrue(args.book_pick)
+        self.assertTrue(args.book_skip_coarse)
+
     def test_book_alignment_branch_precedes_legacy_navigation_setup(self):
         from pathlib import Path
 

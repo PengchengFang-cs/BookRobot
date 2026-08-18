@@ -62,6 +62,8 @@ python3 scripts/calibrate_replay_pick_reference.py \
 
 `./run.sh --book-align --book-align-mode vector` 执行两级底盘对位并在最终测量后退出；`./run.sh --book-pick --book-align-mode vector` 在同一结果上继续执行一次 Pick。两者都要求参考 JSON 已经生成。
 
+如果已经由遥控器完成粗定位，使用 `./run.sh --book-pick --book-skip-coarse --book-align-mode vector`。该入口不会执行旧 `0.48 m` 粗移动，只从当前位置做一次 DataReplay 精对位、复测并执行一次 Pick。
+
 当前资产的固定参考是 `base_link=(0.7709968,-0.3608004,0.7538117) m`。这只是 DataReplay 吸盘落点；五本书分别使用各自实时视觉算出的 0.13/0.10 抓取点与它做差，因此一条单书录制轨迹可以逐本复用。
 
 运行前还需要满足：

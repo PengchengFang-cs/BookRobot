@@ -55,6 +55,11 @@ def arguments():
         default="legacy",
         help="书本底盘对位方式；默认保留原 legacy，vector 合并 X/Y 位移",
     )
+    parser.add_argument(
+        "--book-skip-coarse",
+        action="store_true",
+        help="机器人已遥操到桌前时跳过 0.48 m 粗定位",
+    )
     return parser.parse_args()
 
 
@@ -100,6 +105,7 @@ def run_real(args):
                     Stage1BookPickReplayer(),
                     replay_reference,
                     say,
+                    skip_coarse=args.book_skip_coarse,
                 )
             else:
                 run_book_alignment_once(
