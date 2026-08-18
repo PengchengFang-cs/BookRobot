@@ -1,15 +1,18 @@
 import unittest
 from types import SimpleNamespace
 
-from book_alignment import STAGE1_PICK_REFERENCE_BASE_M
+from book_geometry import BookGeometry
 from mission import run_book_alignment_once, run_book_pick_once, run_one_fruit
+from replay_pick_reference import ReplayPickReference
 
 
 class _Vision:
     def __init__(self, results):
         self.results = iter(results)
+        self.frames = []
 
     def find(self, target, frame):
+        self.frames.append(frame)
         return next(self.results)
 
 
@@ -45,18 +48,13 @@ class _Arm:
 
 
 class _AlignmentNavigator:
-    def __init__(self):
+    def __init__(self, results):
         self.calls = []
+        self.results = iter(results)
 
     def align(self, *, reference, observed):
         self.calls.append((reference, observed))
-        return SimpleNamespace(
-            command_count=2,
-            mode="vector",
-            odom_dx_m=-0.012,
-            odom_dy_m=-0.024,
-            imu_dyaw_rad=0.002,
-        )
+        return next(self.results)
 
 
 class _PickReplayer:
@@ -72,6 +70,44 @@ class _PickReplayer:
             torso_actual_m=0.211,
             d01_holding=True,
         )
+
+
+def _nav_result(dx, dy, yaw=0.0):
+    return SimpleNamespace(
+        command_count=2,
+        mode="vector",
+        odom_dx_m=dx,
+        odom_dy_m=dy,
+        imu_dyaw_rad=yaw,
+    )
+
+
+def _book(point):
+    geometry = BookGeometry(
+        suction_point=point,
+        long_axis=(1.0, 0.0, 0.0),
+        short_axis_right_to_left=(0.0, 1.0, 0.0),
+        long_extent_m=0.30,
+        short_extent_m=0.20,
+        confidence=0.9,
+        long_inset_m=0.13,
+        right_inset_m=0.10,
+    )
+    return SimpleNamespace(suction_point=point, geometry=geometry)
+
+
+def _reference():
+    return ReplayPickReference(
+        asset_id="S1_TABLE_PICK_BOOK",
+        contact_frame_index=300,
+        early_frame_indices=(0, 10, 20, 40, 80),
+        suction_center_px=(164.17, 196.70),
+        reference_contact_base_m=(0.715, -0.391, 0.713),
+        long_inset_m=0.13,
+        right_inset_m=0.10,
+        sample_count=5,
+        axis_spread_m=(0.001, 0.001, 0.002),
+    )
 
 
 class MissionMultiBookTests(unittest.TestCase):
@@ -101,83 +137,81 @@ class MissionMultiBookTests(unittest.TestCase):
 
 
 class BookAlignmentMissionTests(unittest.TestCase):
-    def test_detects_aligns_and_measures_again(self):
-        reference = STAGE1_PICK_REFERENCE_BASE_M
-        initial_far = SimpleNamespace(suction_point=(0.70, 0.31, 0.77))
-        initial_near = SimpleNamespace(
-            suction_point=(0.60, -0.33, reference[2] + 0.005)
+    def _scenario(self):
+        initial_target = _book((0.90, -0.20, 0.723))
+        initial_other = _book((0.88, 0.25, 0.724))
+        after_coarse_target = _book((0.70, -0.20, 0.723))
+        replay_near_distractor = _book((0.715, -0.391, 0.723))
+        final_target = _book((0.716, -0.390, 0.723))
+        final_other = _book((0.72, 0.05, 0.724))
+        vision = _Vision(
+            [
+                [initial_other, initial_target],
+                [replay_near_distractor, after_coarse_target],
+                [final_other, final_target],
+            ]
         )
-        final_near = SimpleNamespace(
-            suction_point=(reference[0] + 0.003, reference[1] - 0.002, 0.756)
+        navigator = _AlignmentNavigator(
+            [
+                _nav_result(0.20, 0.0),
+                _nav_result(-0.015, 0.191),
+            ]
         )
-        vision = _Vision([[initial_far, initial_near], [final_near]])
-        vision.frames = []
-        original_find = vision.find
+        return vision, navigator, initial_target, after_coarse_target, final_target
 
-        def record_find(target, frame):
-            vision.frames.append(frame)
-            return original_find(target, frame)
-
-        vision.find = record_find
-        navigator = _AlignmentNavigator()
+    def test_runs_coarse_then_precise_and_keeps_same_book(self):
+        vision, navigator, initial, after_coarse, final = self._scenario()
         messages = []
 
-        result = run_book_alignment_once(vision, navigator, say=messages.append)
+        result = run_book_alignment_once(
+            vision,
+            navigator,
+            _reference(),
+            say=messages.append,
+        )
 
-        self.assertEqual(vision.frames, ["base_link", "base_link"])
-        self.assertIs(result.initial.book, initial_near)
-        self.assertIs(result.final.book, final_near)
-        self.assertEqual(result.command_count, 2)
-        self.assertEqual(result.navigation_mode, "vector")
+        self.assertEqual(vision.frames, ["base_link", "base_link", "base_link"])
+        self.assertEqual(len(navigator.calls), 2)
+        self.assertIs(result.coarse.book, initial)
+        self.assertIs(result.precise.book, after_coarse)
+        self.assertIs(result.final.book, final)
+        self.assertAlmostEqual(navigator.calls[0][0][0], 0.48)
+        self.assertEqual(navigator.calls[1][0], _reference().reference_contact_base_m)
+        self.assertAlmostEqual(result.z_offset_m, 0.010)
         self.assertTrue(result.xy_within_tolerance)
-        self.assertAlmostEqual(
-            result.z_offset_m,
-            initial_near.suction_point[2] - result.initial.reference_m[2],
-        )
-        self.assertNotAlmostEqual(
-            result.z_offset_m,
-            final_near.suction_point[2] - result.final.reference_m[2],
-        )
-        self.assertEqual(
-            navigator.calls,
-            [(result.initial.reference_m, result.initial.observed_m)],
-        )
-        self.assertTrue(any("初始偏差" in message for message in messages))
-        self.assertTrue(any("最终偏差" in message for message in messages))
-        self.assertTrue(any("固定Z偏移=0.005 m" in message for message in messages))
-        self.assertTrue(any("odom dx=-0.012 m" in message for message in messages))
-        self.assertTrue(any("dy=-0.024 m" in message for message in messages))
-        self.assertTrue(any("yaw=0.002 rad" in message for message in messages))
-        self.assertTrue(any("XY验收=达标" in message for message in messages))
+        self.assertTrue(any("0.48 m 粗定位" in message for message in messages))
+        self.assertTrue(any("DataReplay 精确偏差" in message for message in messages))
+        self.assertTrue(any("最终 DataReplay 残差" in message for message in messages))
 
-    def test_rejects_empty_initial_detection(self):
+    def test_pick_receives_only_precise_stage_z_offset(self):
+        vision, navigator, _initial, _after_coarse, _final = self._scenario()
+        replayer = _PickReplayer()
+
+        result = run_book_pick_once(
+            vision,
+            navigator,
+            replayer,
+            _reference(),
+            say=lambda _message: None,
+        )
+
+        self.assertEqual(replayer.offsets, [result.alignment.precise.z_offset_m])
+        self.assertEqual(result.replay.frames_sent, 607)
+        self.assertTrue(result.replay.d01_holding)
+
+    def test_rejects_empty_initial_detection_before_navigation(self):
         vision = _Vision([[]])
+        navigator = _AlignmentNavigator([])
 
         with self.assertRaisesRegex(RuntimeError, "没有检测到可对位的书本"):
             run_book_alignment_once(
                 vision,
-                _AlignmentNavigator(),
+                navigator,
+                _reference(),
                 say=lambda _message: None,
             )
 
-    def test_book_pick_aligns_then_replays_once_even_when_xy_report_is_not_ten_mm(self):
-        initial = SimpleNamespace(suction_point=(0.920, -0.292, 0.767))
-        final = SimpleNamespace(suction_point=(0.904, -0.360, 0.766))
-        vision = _Vision([[initial], [final]])
-        navigator = _AlignmentNavigator()
-        replayer = _PickReplayer()
-        messages = []
-
-        result = run_book_pick_once(
-            vision, navigator, replayer, say=messages.append
-        )
-
-        self.assertFalse(result.alignment.xy_within_tolerance)
-        self.assertEqual(replayer.offsets, [result.alignment.z_offset_m])
-        self.assertEqual(result.replay.frames_sent, 607)
-        self.assertTrue(result.replay.d01_holding)
-        self.assertTrue(any("607" in message for message in messages))
-        self.assertTrue(any("D01 holding=True" in message for message in messages))
+        self.assertEqual(navigator.calls, [])
 
 
 if __name__ == "__main__":

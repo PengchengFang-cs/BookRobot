@@ -2,7 +2,13 @@
 
 from dataclasses import dataclass
 
-from book_alignment import select_alignment_book
+from book_alignment import (
+    build_replay_alignment_target,
+    predict_book_after_base_motion,
+    reassociate_book,
+    select_coarse_book,
+)
+from book_geometry import contact_point_for_insets
 from config import SCAN_ANGLE_RAD, SCAN_COUNT
 
 
@@ -11,14 +17,12 @@ BOOK_ALIGNMENT_XY_TOLERANCE_M = 0.010
 
 @dataclass(frozen=True)
 class BookAlignmentRun:
-    initial: object
+    coarse: object
+    precise: object
     final: object
-    command_count: int
+    coarse_navigation: object
+    precise_navigation: object
     z_offset_m: float
-    navigation_mode: str
-    odom_dx_m: float
-    odom_dy_m: float
-    imu_dyaw_rad: float
     xy_within_tolerance: bool
 
 
@@ -33,57 +37,104 @@ def _format_residual(label, target):
     return f"{label}: dx={dx:.3f} m, dy={dy:.3f} m, dz={dz:.3f} m"
 
 
-def run_book_alignment_once(vision, navigator, say=print):
-    """Align one detected book to the recorded DataReplay pick point."""
-
-    initial = select_alignment_book(vision.find("book", frame="base_link"))
-    say(
-        "选择吸取点 "
-        f"x={initial.observed_m[0]:.3f}, "
-        f"y={initial.observed_m[1]:.3f}, "
-        f"z={initial.observed_m[2]:.3f}"
-    )
-    say(_format_residual("初始偏差", initial))
-    navigation = navigator.align(
-        reference=initial.reference_m,
-        observed=initial.observed_m,
-    )
-    say(
-        f"导航对位动作完成，模式={navigation.mode}，"
-        f"共执行 {navigation.command_count} 条 X/Y 命令"
-    )
-    say(
-        "运动反馈: "
+def _format_navigation(label, navigation):
+    return (
+        f"{label}: 模式={navigation.mode}, 命令={navigation.command_count}, "
         f"odom dx={navigation.odom_dx_m:.3f} m, "
         f"dy={navigation.odom_dy_m:.3f} m, "
         f"yaw={navigation.imu_dyaw_rad:.3f} rad"
     )
-    say(f"Pipeline 固定Z偏移={initial.z_offset_m:.3f} m")
 
-    final = select_alignment_book(vision.find("book", frame="base_link"))
-    say(_format_residual("最终偏差", final))
+
+def run_book_alignment_once(vision, navigator, replay_reference, say=print):
+    """Run coarse visual approach followed by replay-image precise docking."""
+
+    coarse = select_coarse_book(vision.find("book", frame="base_link"))
+    say(
+        "0.48 m 粗定位: "
+        f"observed=({coarse.observed_m[0]:.3f}, "
+        f"{coarse.observed_m[1]:.3f}, {coarse.observed_m[2]:.3f}) m"
+    )
+    coarse_navigation = navigator.align(
+        reference=coarse.reference_m,
+        observed=coarse.observed_m,
+    )
+    say(_format_navigation("粗定位运动反馈", coarse_navigation))
+
+    initial_contact = contact_point_for_insets(
+        coarse.book.geometry,
+        long_inset_m=replay_reference.long_inset_m,
+        right_inset_m=replay_reference.right_inset_m,
+    )
+    predicted_after_coarse = predict_book_after_base_motion(
+        initial_contact,
+        odom_dx_m=coarse_navigation.odom_dx_m,
+        odom_dy_m=coarse_navigation.odom_dy_m,
+        imu_dyaw_rad=coarse_navigation.imu_dyaw_rad,
+    )
+    after_coarse_book = reassociate_book(
+        vision.find("book", frame="base_link"),
+        predicted_point_m=predicted_after_coarse,
+        replay_reference=replay_reference,
+    )
+    precise = build_replay_alignment_target(
+        book=after_coarse_book,
+        replay_reference=replay_reference,
+    )
+    say(_format_residual("DataReplay 精确偏差", precise))
+    precise_navigation = navigator.align(
+        reference=precise.reference_m,
+        observed=precise.observed_m,
+    )
+    say(_format_navigation("精确对位运动反馈", precise_navigation))
+
+    predicted_final = predict_book_after_base_motion(
+        precise.observed_m,
+        odom_dx_m=precise_navigation.odom_dx_m,
+        odom_dy_m=precise_navigation.odom_dy_m,
+        imu_dyaw_rad=precise_navigation.imu_dyaw_rad,
+    )
+    final_book = reassociate_book(
+        vision.find("book", frame="base_link"),
+        predicted_point_m=predicted_final,
+        replay_reference=replay_reference,
+    )
+    final = build_replay_alignment_target(
+        book=final_book,
+        replay_reference=replay_reference,
+    )
+    say(_format_residual("最终 DataReplay 残差", final))
     xy_within_tolerance = (
         abs(final.residual_m[0]) <= BOOK_ALIGNMENT_XY_TOLERANCE_M
         and abs(final.residual_m[1]) <= BOOK_ALIGNMENT_XY_TOLERANCE_M
     )
     say(f"XY验收={'达标' if xy_within_tolerance else '未达标'}")
     return BookAlignmentRun(
-        initial,
-        final,
-        navigation.command_count,
-        initial.z_offset_m,
-        navigation.mode,
-        navigation.odom_dx_m,
-        navigation.odom_dy_m,
-        navigation.imu_dyaw_rad,
-        xy_within_tolerance,
+        coarse=coarse,
+        precise=precise,
+        final=final,
+        coarse_navigation=coarse_navigation,
+        precise_navigation=precise_navigation,
+        z_offset_m=precise.z_offset_m,
+        xy_within_tolerance=xy_within_tolerance,
     )
 
 
-def run_book_pick_once(vision, navigator, replayer, say=print):
+def run_book_pick_once(
+    vision,
+    navigator,
+    replayer,
+    replay_reference,
+    say=print,
+):
     """Align one book, apply the fixed Z handoff, and replay one Pick."""
 
-    alignment = run_book_alignment_once(vision, navigator, say=say)
+    alignment = run_book_alignment_once(
+        vision,
+        navigator,
+        replay_reference,
+        say=say,
+    )
     say("开始按固定 Z 偏移执行 Stage-1 Pick DataReplay")
     replay = replayer.pick(alignment.z_offset_m)
     say(
