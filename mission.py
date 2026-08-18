@@ -22,6 +22,12 @@ class BookAlignmentRun:
     xy_within_tolerance: bool
 
 
+@dataclass(frozen=True)
+class BookPickRun:
+    alignment: BookAlignmentRun
+    replay: object
+
+
 def _format_residual(label, target):
     dx, dy, dz = target.residual_m
     return f"{label}: dx={dx:.3f} m, dy={dy:.3f} m, dz={dz:.3f} m"
@@ -72,6 +78,21 @@ def run_book_alignment_once(vision, navigator, say=print):
         navigation.imu_dyaw_rad,
         xy_within_tolerance,
     )
+
+
+def run_book_pick_once(vision, navigator, replayer, say=print):
+    """Align one book, apply the fixed Z handoff, and replay one Pick."""
+
+    alignment = run_book_alignment_once(vision, navigator, say=say)
+    say("开始按固定 Z 偏移执行 Stage-1 Pick DataReplay")
+    replay = replayer.pick(alignment.z_offset_m)
+    say(
+        f"Pick 回放完成: frames={replay.frames_sent}, "
+        f"torso target={replay.torso_target_m:.3f} m, "
+        f"actual={replay.torso_actual_m:.3f} m, "
+        f"D01 holding={replay.d01_holding}"
+    )
+    return BookPickRun(alignment=alignment, replay=replay)
 
 
 def run_one_fruit(fruit, vision, navigation, arm, say=print):

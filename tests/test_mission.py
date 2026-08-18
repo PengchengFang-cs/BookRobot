@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
-from mission import run_book_alignment_once, run_one_fruit
+from mission import run_book_alignment_once, run_book_pick_once, run_one_fruit
 
 
 class _Vision:
@@ -55,6 +55,21 @@ class _AlignmentNavigator:
             odom_dx_m=-0.012,
             odom_dy_m=-0.024,
             imu_dyaw_rad=0.002,
+        )
+
+
+class _PickReplayer:
+    def __init__(self):
+        self.offsets = []
+
+    def pick(self, offset):
+        self.offsets.append(offset)
+        return SimpleNamespace(
+            frames_sent=607,
+            z_offset_m=offset,
+            torso_target_m=0.212,
+            torso_actual_m=0.211,
+            d01_holding=True,
         )
 
 
@@ -138,6 +153,25 @@ class BookAlignmentMissionTests(unittest.TestCase):
                 _AlignmentNavigator(),
                 say=lambda _message: None,
             )
+
+    def test_book_pick_aligns_then_replays_once_even_when_xy_report_is_not_ten_mm(self):
+        initial = SimpleNamespace(suction_point=(0.920, -0.292, 0.767))
+        final = SimpleNamespace(suction_point=(0.904, -0.360, 0.766))
+        vision = _Vision([[initial], [final]])
+        navigator = _AlignmentNavigator()
+        replayer = _PickReplayer()
+        messages = []
+
+        result = run_book_pick_once(
+            vision, navigator, replayer, say=messages.append
+        )
+
+        self.assertFalse(result.alignment.xy_within_tolerance)
+        self.assertEqual(replayer.offsets, [result.alignment.z_offset_m])
+        self.assertEqual(result.replay.frames_sent, 607)
+        self.assertTrue(result.replay.d01_holding)
+        self.assertTrue(any("607" in message for message in messages))
+        self.assertTrue(any("D01 holding=True" in message for message in messages))
 
 
 if __name__ == "__main__":

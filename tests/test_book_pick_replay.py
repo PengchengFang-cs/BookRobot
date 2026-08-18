@@ -1,0 +1,291 @@
+import unittest
+from types import SimpleNamespace
+
+import numpy as np
+
+from book_pick_replay import (
+    LegacyV3PickRuntime,
+    Stage1BookPickReplayer,
+    shift_pick_episode_torso,
+)
+
+
+def _episode(values):
+    torso = np.asarray(values, dtype=float).reshape((-1, 1))
+    return SimpleNamespace(
+        num_frames=len(torso),
+        actions={
+            "target_qpos_arms": np.zeros((len(torso), 16)),
+            "target_qpos_torso": torso,
+        },
+        observations={"target_qpos_torso": torso},
+    )
+
+
+class ShiftPickEpisodeTests(unittest.TestCase):
+    def test_applies_constant_positive_offset_without_mutating_source(self):
+        source = _episode([0.20, 0.21, 0.22])
+        original = source.actions["target_qpos_torso"].copy()
+
+        shifted = shift_pick_episode_torso(source, 0.012)
+
+        np.testing.assert_allclose(
+            shifted.actions["target_qpos_torso"].reshape(-1),
+            [0.212, 0.222, 0.232],
+        )
+        np.testing.assert_allclose(source.actions["target_qpos_torso"], original)
+        self.assertIsNot(shifted, source)
+        self.assertIsNot(shifted.actions, source.actions)
+        self.assertIsNot(
+            shifted.actions["target_qpos_torso"],
+            source.actions["target_qpos_torso"],
+        )
+
+    def test_keeps_observation_target_consistent_for_zero_and_negative_offsets(self):
+        for offset in (0.0, -0.015):
+            with self.subTest(offset=offset):
+                source = _episode([0.20, 0.22])
+                shifted = shift_pick_episode_torso(source, offset)
+                expected = np.asarray([0.20 + offset, 0.22 + offset])
+                np.testing.assert_allclose(
+                    shifted.actions["target_qpos_torso"].reshape(-1), expected
+                )
+                np.testing.assert_allclose(
+                    shifted.observations["target_qpos_torso"].reshape(-1), expected
+                )
+
+    def test_rejects_non_finite_boolean_and_physical_range_overflow(self):
+        for offset in (True, float("nan"), float("inf"), 0.11, -0.21):
+            with self.subTest(offset=offset):
+                with self.assertRaises((TypeError, ValueError)):
+                    shift_pick_episode_torso(_episode([0.20]), offset)
+
+    def test_requires_one_torso_target_per_frame(self):
+        source = _episode([0.20, 0.21])
+        source.num_frames = 3
+
+        with self.assertRaisesRegex(ValueError, "frame count"):
+            shift_pick_episode_torso(source, 0.01)
+
+
+class _Runtime:
+    def __init__(self, *, holding=True, fail_replay=False):
+        self.source = _episode([0.20, 0.21, 0.22])
+        self.holding = holding
+        self.fail_replay = fail_replay
+        self.calls = []
+        self.closed = False
+        self.replayed_episode = None
+
+    def load_episode(self):
+        self.calls.append("load")
+        return self.source
+
+    def preposition_torso(self, target_m):
+        self.calls.append(("preposition", target_m))
+        return target_m - 0.001
+
+    def replay_pick(self, episode):
+        self.calls.append("replay")
+        self.replayed_episode = episode
+        if self.fail_replay:
+            raise RuntimeError("replay failed")
+        return SimpleNamespace(frames_sent=episode.num_frames)
+
+    def confirm_holding(self):
+        self.calls.append("holding")
+        return self.holding
+
+    def close(self):
+        self.calls.append("close")
+        self.closed = True
+
+
+class Stage1BookPickReplayerTests(unittest.TestCase):
+    def test_prepositions_shifted_frame_zero_replays_once_and_confirms_holding(self):
+        runtime = _Runtime()
+
+        result = Stage1BookPickReplayer(runtime=runtime).pick(0.012)
+
+        self.assertEqual(runtime.calls[0], "load")
+        self.assertEqual(runtime.calls[1][0], "preposition")
+        self.assertAlmostEqual(runtime.calls[1][1], 0.212)
+        self.assertEqual(runtime.calls[2:], ["replay", "holding", "close"])
+        self.assertEqual(result.frames_sent, 3)
+        self.assertAlmostEqual(result.z_offset_m, 0.012)
+        self.assertAlmostEqual(result.torso_target_m, 0.212)
+        self.assertAlmostEqual(result.torso_actual_m, 0.211)
+        self.assertTrue(result.d01_holding)
+        np.testing.assert_allclose(
+            runtime.replayed_episode.actions["target_qpos_torso"].reshape(-1),
+            [0.212, 0.222, 0.232],
+        )
+
+    def test_rejects_missing_attachment_after_replay(self):
+        runtime = _Runtime(holding=False)
+
+        with self.assertRaisesRegex(RuntimeError, "没有吸住"):
+            Stage1BookPickReplayer(runtime=runtime).pick(0.0)
+
+        self.assertTrue(runtime.closed)
+
+    def test_closes_runtime_when_replay_fails(self):
+        runtime = _Runtime(fail_replay=True)
+
+        with self.assertRaisesRegex(RuntimeError, "replay failed"):
+            Stage1BookPickReplayer(runtime=runtime).pick(0.0)
+
+        self.assertTrue(runtime.closed)
+
+
+class _Status:
+    def __init__(self, value):
+        self.value = value
+
+
+class _ReplayAdapter:
+    def __init__(self, episode):
+        self.episode = episode
+        self.assets = {
+            "S1_TABLE_PICK_BOOK": {
+                "file": "/readonly/pick.h5",
+                "timeout_seconds": 140.0,
+                "allow_base_motion": False,
+                "contract_validation_only": True,
+                "d01_events": [
+                    {"frame_index": 300, "command": "right_suction_start"}
+                ],
+            }
+        }
+        self.frames_sent = 0
+        self.run_calls = []
+        self.closed = False
+        self.delegate = SimpleNamespace(check=self._check)
+
+    def _load_module(self):
+        return SimpleNamespace(
+            HDF5EpisodeLoader=SimpleNamespace(load=lambda _path: self.episode),
+            DataValidator=SimpleNamespace(
+                validate=lambda _episode: SimpleNamespace(valid=True)
+            ),
+        )
+
+    def _episode_contract_error(self, _episode, _entry):
+        return ""
+
+    def _contract_validation_errors(self, _module, _episode, _entry):
+        return []
+
+    def _run_episode(
+        self, _module, episode, entry, asset_id, context, _deadline, before
+    ):
+        self.run_calls.append((episode, entry, asset_id, context, before))
+        self.frames_sent += episode.num_frames
+        return SimpleNamespace(
+            status=_Status("SUCCESS"),
+            detail="published",
+            data={"frames_sent": episode.num_frames},
+        )
+
+    def _check(self, block, context):
+        self.check_call = (block, context)
+        return SimpleNamespace(status=_Status("SUCCESS"), detail="holding")
+
+    def stop_command_stream(self, _reason):
+        self.closed = True
+
+
+class _TorsoAdapter:
+    def __init__(self):
+        self.commands = []
+        self.stopped = False
+
+    def preflight(self):
+        pass
+
+    def execute_command(self, command, *, precision_mode):
+        self.commands.append((command, precision_mode))
+
+    def current_torso_position(self):
+        return 0.211
+
+    def stop(self):
+        self.stopped = True
+
+
+class _NavRuntime:
+    class WandaCommandKind:
+        TORSO_POSITION = "torso"
+
+    def __init__(self):
+        self.adapter = _TorsoAdapter()
+
+    def WandaRos2Adapter(self):
+        return self.adapter
+
+    @staticmethod
+    def MappedMotionCommand(kind, value, axis):
+        return SimpleNamespace(kind=kind, value=value, axis=axis)
+
+
+class LegacyV3PickRuntimeTests(unittest.TestCase):
+    def _runtime(self):
+        episode = _episode([0.212, 0.222, 0.232])
+        replay_adapter = _ReplayAdapter(episode)
+        context = SimpleNamespace(load_state=SimpleNamespace(value="EMPTY_READY"))
+        pick_block = SimpleNamespace(step_id="S1-B1-02")
+        check_block = SimpleNamespace(step_id="S1-B1-03")
+        nav_runtime = _NavRuntime()
+        runtime = LegacyV3PickRuntime(
+            replay_adapter=replay_adapter,
+            context=context,
+            pick_block=pick_block,
+            check_block=check_block,
+            nav_runtime=nav_runtime,
+            monotonic_clock=lambda: 10.0,
+        )
+        return runtime, replay_adapter, nav_runtime, episode
+
+    def test_loads_reviewed_pick_episode_and_prepositions_frame_zero(self):
+        runtime, _replay, nav, episode = self._runtime()
+
+        loaded = runtime.load_episode()
+        actual = runtime.preposition_torso(0.212)
+
+        self.assertIs(loaded, episode)
+        command, precision = nav.adapter.commands[0]
+        self.assertEqual(command.kind, nav.WandaCommandKind.TORSO_POSITION)
+        self.assertAlmostEqual(command.value, 0.212)
+        self.assertEqual(command.axis, "Z")
+        self.assertTrue(precision)
+        self.assertAlmostEqual(actual, 0.211)
+        self.assertTrue(nav.adapter.stopped)
+
+    def test_replays_only_pick_with_base_disabled_and_frame_300_d01_event(self):
+        runtime, replay, _nav, episode = self._runtime()
+        runtime.load_episode()
+
+        evidence = runtime.replay_pick(episode)
+
+        self.assertEqual(evidence.frames_sent, 3)
+        self.assertEqual(len(replay.run_calls), 1)
+        sent_episode, entry, asset_id, _context, before = replay.run_calls[0]
+        self.assertIs(sent_episode, episode)
+        self.assertEqual(asset_id, "S1_TABLE_PICK_BOOK")
+        self.assertFalse(entry["allow_base_motion"])
+        self.assertEqual(
+            entry["d01_events"],
+            [{"frame_index": 300, "command": "right_suction_start"}],
+        )
+        self.assertEqual(before, 0)
+
+    def test_confirms_pick_check_and_closes_command_stream(self):
+        runtime, replay, _nav, _episode_value = self._runtime()
+
+        self.assertTrue(runtime.confirm_holding())
+        self.assertEqual(replay.check_call[0].step_id, "S1-B1-03")
+        runtime.close()
+        self.assertTrue(replay.closed)
+
+if __name__ == "__main__":
+    unittest.main()

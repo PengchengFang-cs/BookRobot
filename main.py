@@ -5,7 +5,7 @@ import argparse
 import sys
 
 from geometry import fruit_from_text
-from mission import run_book_alignment_once, run_one_fruit
+from mission import run_book_alignment_once, run_book_pick_once, run_one_fruit
 
 
 def arguments():
@@ -45,6 +45,11 @@ def arguments():
         help="检测书本并对位到 DataReplay 固定抓取点，不抓取",
     )
     parser.add_argument(
+        "--book-pick",
+        action="store_true",
+        help="检测、对位并执行一次 Stage-1 DataReplay 吸书",
+    )
+    parser.add_argument(
         "--book-align-mode",
         choices=("legacy", "vector"),
         default="legacy",
@@ -71,7 +76,7 @@ def run_real(args):
     arm = None
 
     try:
-        if args.book_align:
+        if args.book_align or args.book_pick:
             from book_navigation import BookAlignmentNavigator
             from tf2_ros import Buffer, TransformListener
 
@@ -79,11 +84,19 @@ def run_real(args):
             tf_listener = TransformListener(tf_buffer, node)
             vision = Vision(node, tf_buffer)
 
-            run_book_alignment_once(
-                vision,
-                BookAlignmentNavigator(mode=args.book_align_mode),
-                lambda text: print(f"[机器人] {text}"),
-            )
+            navigator = BookAlignmentNavigator(mode=args.book_align_mode)
+            say = lambda text: print(f"[机器人] {text}")
+            if args.book_pick:
+                from book_pick_replay import Stage1BookPickReplayer
+
+                run_book_pick_once(
+                    vision,
+                    navigator,
+                    Stage1BookPickReplayer(),
+                    say,
+                )
+            else:
+                run_book_alignment_once(vision, navigator, say)
             print(f"[视觉] 调试图: {vision.debug_path}")
             return
 

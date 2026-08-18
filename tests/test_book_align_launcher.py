@@ -20,9 +20,20 @@ class BookAlignLauncherTests(unittest.TestCase):
         self.assertLess(branch, moveit_install)
         self.assertIn('source "$DIR/scripts/book_vision_env.sh"', run_text)
 
+    def test_book_pick_uses_vision_environment_without_moveit_or_base_release(self):
+        run_text = (ROOT / "run.sh").read_text(encoding="utf-8")
+
+        branch = run_text.index('if [[ " $* " == *" --book-align "*')
+        branch_end = run_text.index("\nfi", branch)
+        text = run_text[branch:branch_end]
+        self.assertIn('" --book-pick "', text)
+        self.assertIn('source "$DIR/scripts/book_vision_env.sh"', text)
+        self.assertNotIn("release_base.sh", text)
+        self.assertLess(branch, run_text.index("install_moveit_user.sh"))
+
     def test_book_alignment_does_not_wait_for_a_new_release_button_edge(self):
         main_text = (ROOT / "main.py").read_text(encoding="utf-8")
-        branch_start = main_text.index("if args.book_align:")
+        branch_start = main_text.index("if args.book_align or args.book_pick:")
         branch_end = main_text.index("\n            return", branch_start)
         branch = main_text[branch_start:branch_end]
 
@@ -30,7 +41,7 @@ class BookAlignLauncherTests(unittest.TestCase):
 
     def test_book_alignment_does_not_release_an_already_enabled_base(self):
         run_text = (ROOT / "run.sh").read_text(encoding="utf-8")
-        branch_start = run_text.index('if [[ " $* " == *" --book-align "* ]]')
+        branch_start = run_text.index('if [[ " $* " == *" --book-align "*')
         branch_end = run_text.index("\nfi", branch_start)
         branch = run_text[branch_start:branch_end]
 
