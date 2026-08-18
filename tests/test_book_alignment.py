@@ -11,7 +11,7 @@ from book_alignment import (
     reassociate_book,
     select_coarse_book,
 )
-from book_geometry import BookGeometry, contact_point_for_insets
+from book_geometry import BookGeometry
 from config import APPROACH_DISTANCE_M
 from replay_pick_reference import ReplayPickReference
 
@@ -42,8 +42,6 @@ def _reference(**changes):
         early_frame_indices=(0, 10, 20, 40, 80),
         suction_center_px=(164.17, 196.70),
         reference_contact_base_m=(0.715, -0.391, 0.713),
-        long_inset_m=0.08,
-        right_inset_m=0.05,
         sample_count=5,
         axis_spread_m=(0.001, 0.001, 0.002),
     )
@@ -71,11 +69,7 @@ class BookAlignmentTests(unittest.TestCase):
             replay_reference=reference,
         )
 
-        expected_observed = contact_point_for_insets(
-            book.geometry,
-            long_inset_m=reference.long_inset_m,
-            right_inset_m=reference.right_inset_m,
-        )
+        expected_observed = book.suction_point
         self.assertEqual(target.reference_m, reference.reference_contact_base_m)
         self.assertNotEqual(target.reference_m[0], APPROACH_DISTANCE_M)
         self.assertEqual(target.observed_m, expected_observed)
@@ -101,8 +95,6 @@ class BookAlignmentTests(unittest.TestCase):
     def test_reassociates_nearest_predicted_book_not_nearest_replay_reference(self):
         reference = _reference(
             reference_contact_base_m=(0.70, -0.39, 0.72),
-            long_inset_m=0.13,
-            right_inset_m=0.10,
         )
         same_book = _book((0.91, -0.10, 0.72))
         distractor = _book((0.70, -0.39, 0.72))

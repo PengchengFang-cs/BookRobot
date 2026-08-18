@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from book_geometry import CameraIntrinsics, decode_bbox_rle, insets_for_contact_point
+from book_geometry import CameraIntrinsics, decode_bbox_rle
 
 
 @dataclass(frozen=True)
@@ -24,8 +24,6 @@ class ReplayPickReference:
     early_frame_indices: tuple[int, ...]
     suction_center_px: tuple[float, float]
     reference_contact_base_m: tuple[float, float, float]
-    long_inset_m: float
-    right_inset_m: float
     sample_count: int
     axis_spread_m: tuple[float, float, float]
 
@@ -341,18 +339,12 @@ def calibrate_replay_pick_reference(
             cover_z_base_m=detected_book.geometry.suction_point[2],
             camera_to_base=camera_to_base,
         )
-    long_inset, right_inset = insets_for_contact_point(
-        detected_book.geometry,
-        projected.reference_contact_base_m,
-    )
     return ReplayPickReference(
         asset_id=str(asset_id),
         contact_frame_index=int(contact_frame_index),
         early_frame_indices=early_indices,
         suction_center_px=center,
         reference_contact_base_m=projected.reference_contact_base_m,
-        long_inset_m=long_inset,
-        right_inset_m=right_inset,
         sample_count=projected.sample_count,
         axis_spread_m=projected.axis_spread_m,
     )
@@ -378,8 +370,6 @@ def load_replay_pick_reference(path):
         reference_contact_base_m=tuple(
             float(value) for value in payload["reference_contact_base_m"]
         ),
-        long_inset_m=float(payload["long_inset_m"]),
-        right_inset_m=float(payload["right_inset_m"]),
         sample_count=int(payload["sample_count"]),
         axis_spread_m=tuple(float(value) for value in payload["axis_spread_m"]),
     )

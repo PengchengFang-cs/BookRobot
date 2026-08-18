@@ -8,7 +8,6 @@ from book_alignment import (
     reassociate_book,
     select_coarse_book,
 )
-from book_geometry import contact_point_for_insets
 from config import SCAN_ANGLE_RAD, SCAN_COUNT
 
 
@@ -61,11 +60,7 @@ def run_book_alignment_once(vision, navigator, replay_reference, say=print):
     )
     say(_format_navigation("粗定位运动反馈", coarse_navigation))
 
-    initial_contact = contact_point_for_insets(
-        coarse.book.geometry,
-        long_inset_m=replay_reference.long_inset_m,
-        right_inset_m=replay_reference.right_inset_m,
-    )
+    initial_contact = coarse.book.suction_point
     predicted_after_coarse = predict_book_after_base_motion(
         initial_contact,
         odom_dx_m=coarse_navigation.odom_dx_m,

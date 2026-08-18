@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 import math
 
-from book_geometry import contact_point_for_insets
 from config import APPROACH_DISTANCE_M
 
 
@@ -56,11 +55,7 @@ def select_coarse_book(books):
 def build_replay_alignment_target(*, book, replay_reference):
     """Build the precise target from one asset's recorded contact geometry."""
 
-    observed = contact_point_for_insets(
-        book.geometry,
-        long_inset_m=replay_reference.long_inset_m,
-        right_inset_m=replay_reference.right_inset_m,
-    )
+    observed = _point3(book.suction_point)
     reference = _point3(replay_reference.reference_contact_base_m)
     residual = tuple(observed[index] - reference[index] for index in range(3))
     z_offset_m = residual[2]
@@ -102,11 +97,7 @@ def reassociate_book(books, *, predicted_point_m, replay_reference):
     predicted = _point3(predicted_point_m)
     candidates = []
     for book in books:
-        point = contact_point_for_insets(
-            book.geometry,
-            long_inset_m=replay_reference.long_inset_m,
-            right_inset_m=replay_reference.right_inset_m,
-        )
+        point = _point3(book.suction_point)
         dx = point[0] - predicted[0]
         dy = point[1] - predicted[1]
         candidates.append((dx * dx + dy * dy, book))

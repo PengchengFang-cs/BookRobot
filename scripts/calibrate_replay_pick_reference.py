@@ -145,10 +145,6 @@ def main(argv=None):
     print(f"overlay={args.overlay}")
     print(f"suction_center_px={reference.suction_center_px}")
     print(f"reference_contact_base_m={reference.reference_contact_base_m}")
-    print(
-        "book_insets_m="
-        f"({reference.long_inset_m}, {reference.right_inset_m})"
-    )
     print(f"axis_spread_m={reference.axis_spread_m}")
 
 

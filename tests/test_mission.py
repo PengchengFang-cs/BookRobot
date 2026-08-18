@@ -103,8 +103,6 @@ def _reference():
         early_frame_indices=(0, 10, 20, 40, 80),
         suction_center_px=(164.17, 196.70),
         reference_contact_base_m=(0.715, -0.391, 0.713),
-        long_inset_m=0.13,
-        right_inset_m=0.10,
         sample_count=5,
         axis_spread_m=(0.001, 0.001, 0.002),
     )

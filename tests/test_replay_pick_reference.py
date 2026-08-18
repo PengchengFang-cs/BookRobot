@@ -78,8 +78,6 @@ class ReplayPickReferenceTests(unittest.TestCase):
         np.testing.assert_allclose(
             result.reference_contact_base_m, (0.30, 0.15, 1.0), atol=1e-12
         )
-        self.assertAlmostEqual(result.long_inset_m, 0.08)
-        self.assertAlmostEqual(result.right_inset_m, 0.0)
         self.assertEqual(result.sample_count, 3)
         self.assertEqual(result.axis_spread_m, (0.0, 0.0, 0.0))
 
@@ -200,8 +198,6 @@ class ReplayPickReferenceTests(unittest.TestCase):
             early_frame_indices=(0, 10, 20, 40, 80),
             suction_center_px=(164.17, 196.70),
             reference_contact_base_m=(0.715, -0.391, 0.713),
-            long_inset_m=0.075,
-            right_inset_m=0.042,
             sample_count=5,
             axis_spread_m=(0.001, 0.002, 0.003),
         )
