@@ -26,6 +26,7 @@
 - 修正并重新部署后，真机执行 4 条横向/前后命令并成功退出；移动后重新检测 5 本书，选中目标的最终残差为 `dx=-0.011 m, dy=-0.026 m, dz=+0.009 m`。本次没有运行机械臂、DataReplay 或吸盘；最终调试叠加图保存在非 Git 的本地 `logs/book_alignment_final_20260818.jpg`。
 - 进一步核对 `S1_TABLE_PICK_BOOK` 第 0 帧，确认 DataReplay 的升降起点约为 `0.20 m`。首次对位从 `0.28 m` 开始，却使用 `current + observed_z - reference_z`，违反了旧公式的录制起点前提。FPC 已改为 `0.20 m + observed_z - reference_z`，超出 `[0.0, 0.28] m` 时失败而不裁剪，并以实际 `body_joint` 反馈验证补偿后有效 Z 残差不超过 `3 mm`；56 项本地测试通过。commit `49ef5cac59b1c2b7cdac08782f06e6e2c3879059` 已直接部署到 Wanda，机器人端编译和 13 项纯测试通过，未执行运动。
 - 对右 D01 做只读和非吸附通信排查：FTDI `AR8J81NT` 正常枚举、权限和独占进程正常，服务能写 Modbus 请求，但在已支持的地址和波特率组合下均收到 0 字节。服务重启后故障不变并已恢复运行；问题边界落在 D01 主电源或 FTDI 后端 RS485 物理链路，见 [`BOT-20260818-08`](ROBOT_ISSUES.md#bot-20260818-08)。排查未触发吸附或机器人运动。
+- 根据旧 Pipeline 新的 Stage 1 Z-offset 设计，更正 FPC 职责：导航阶段预置升降柱仍会被 DataReplay 的绝对 `0.20 m` torso 帧覆盖，因此 commit `49ef5ca` 的导航阶段高度补偿只适合独立测试，不是最终抓取链路。FPC 现改为按 X/Y 选书、仅向 `navnav_final` 传 X/Y、固定输出一次 `z_offset_m=observed_z-reference_z`；±30 mm 外在导航前失败，合法 `0.0 m` 保留。完整本地 55 项测试通过，机械臂、DataReplay token 和 D01 由另一条工作线负责。
 
 ## 2026-08-17（Asia/Shanghai）
 

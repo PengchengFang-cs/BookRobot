@@ -17,7 +17,7 @@
 - **标题**：重启后底盘不响应
 - **首次发现**：2026-08-18（Asia/Shanghai）
 - **最近更新**：2026-08-18（Asia/Shanghai）
-- **状态**：软件已修复，待真机验证
+- **状态**：已解决（FPC 导航职责）
 - **现象与影响**：机器人重启后，网络、ROS 和 controller 健康，但底盘不响应移动控制；当时无法用底盘继续真机测试。
 - **复现/上下文**：发生在机器人重启后的释放流程中。项目路径 `/home/unix_ai/fpc/release_base.sh` 通过 `fruit_movebase_mode_controller` 的 `movebase_mode_command/mode_command` 依次发送 `5` 和 `0`。
 - **确认事实与证据**：
@@ -137,9 +137,9 @@
   - FPC 对位入口把升降目标裁到 `0.280 m` 后跳过不可执行的高度命令，横向和前后对位成功完成。
   - 移动后高度残差仍约 `+0.009 m`，与未执行上升一致。
 - **根因或假设**：已确认直接原因是高度基准错误。旧公式 `current_torso + observed_z - reference_z` 隐含当前升降柱已位于录制起点；实际当前值为 `0.280 m`，而 `S1_TABLE_PICK_BOOK` 第 0 帧约为 `0.200 m`。`0.280 m` 是否也是控制器永久硬上限仍无权威文档，但它不再影响本次目标计算。
-- **处理**：FPC 改用 `0.200 m + observed_z - reference_z` 计算绝对目标；目标超出已确认 `[0.0, 0.28] m` 行程时失败，不再裁剪。执行后以 `book_z_delta - (actual_torso - 0.200 m)` 计算有效 Z 残差，并要求绝对值不超过 `3 mm`。没有修改只读参考工程 `navnav_final`。
-- **验证**：自动化测试覆盖从 `0.280 m` 起步且书本高 `8 mm` 时生成 `0.208 m` 目标、正负偏差、越界拒绝和 `3 mm` 反馈判定；完整本地 56 项测试通过。尚未执行修复后的真机升降。
-- **剩余工作/链接**：部署后执行一次真实对位，保存目标高度、实际 `body_joint` 和有效 Z 残差。当前状态见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md#当前问题)。
+- **处理**：最初曾在 FPC 中改用 `0.200 m + observed_z - reference_z` 并验证实际 torso；随后确认 DataReplay 的逐帧绝对 `0.20 m` 会覆盖导航阶段预置，因此该修复被最终 XY/Z 分流设计取代。FPC 现在令导航 observed Z 恒等于 reference Z，完全不生成 torso 命令，并将初始 `book_z_delta` 作为固定 `z_offset_m` 交给旧 Pipeline。没有修改只读参考工程 `navnav_final`。
+- **验证**：自动化测试证明选书只比较 X/Y、Z 不进入导航构建器、±30 mm 业务限幅和正/负/零 offset 均按合同输出；完整本地 55 项测试通过。FPC 导航侧不再需要真机升降验证。
+- **剩余工作/链接**：旧 Pipeline 的 token、Pick/Place torso 逐帧偏移和物理 Z 精度属于后续集成，不再作为本条 FPC 导航故障。当前状态见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md#正在进行)。
 
 ## BOT-20260818-08
 
