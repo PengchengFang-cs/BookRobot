@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from book_geometry import CameraIntrinsics, insets_for_contact_point
+from book_geometry import CameraIntrinsics, decode_bbox_rle, insets_for_contact_point
 
 
 @dataclass(frozen=True)
@@ -47,9 +47,7 @@ def scale_intrinsics(intrinsics, *, source_size, target_size):
     )
 
 
-def find_blue_suction_center(*, baseline_rgb, contact_rgb, roi_xywh):
-    """Return the centroid of the largest newly visible blue ROI component."""
-
+def _largest_new_blue_component(*, baseline_rgb, contact_rgb, roi_xywh):
     baseline = np.asarray(baseline_rgb, dtype=np.uint8)
     contact = np.asarray(contact_rgb, dtype=np.uint8)
     if baseline.shape != contact.shape or baseline.ndim != 3 or baseline.shape[2] != 3:
@@ -129,8 +127,60 @@ def find_blue_suction_center(*, baseline_rgb, contact_rgb, roi_xywh):
     if not components:
         raise ValueError("blue_suction_not_found")
     component = max(components, key=len)
-    center_y, center_x = np.mean(np.asarray(component, dtype=float), axis=0)
-    return (float(x + center_x), float(y + center_y))
+    full_component = np.zeros(contact.shape[:2], dtype=bool)
+    rows, columns = np.asarray(component, dtype=int).T
+    full_component[y + rows, x + columns] = True
+    return full_component
+
+
+def find_blue_suction_center(*, baseline_rgb, contact_rgb, roi_xywh):
+    """Return the centroid of the largest newly visible blue ROI component."""
+
+    component = _largest_new_blue_component(
+        baseline_rgb=baseline_rgb,
+        contact_rgb=contact_rgb,
+        roi_xywh=roi_xywh,
+    )
+    rows, columns = np.nonzero(component)
+    return (float(np.mean(columns)), float(np.mean(rows)))
+
+
+def find_blue_book_contact_pixel(
+    *, baseline_rgb, contact_rgb, roi_xywh, book_mask
+):
+    """Return the recorded book pixel nearest the blue suction's contact end."""
+
+    component = _largest_new_blue_component(
+        baseline_rgb=baseline_rgb,
+        contact_rgb=contact_rgb,
+        roi_xywh=roi_xywh,
+    )
+    book = np.asarray(book_mask, dtype=bool)
+    if book.shape != component.shape or not np.any(book):
+        raise ValueError("recorded_book_mask_invalid")
+    blue_rows, blue_columns = np.nonzero(component)
+    book_rows, book_columns = np.nonzero(book)
+    minimum_distance_squared = None
+    closest_book_pixels = []
+    for blue_row, blue_column in zip(blue_rows, blue_columns):
+        distances = (
+            (book_rows - blue_row) * (book_rows - blue_row)
+            + (book_columns - blue_column) * (book_columns - blue_column)
+        )
+        local_minimum = int(np.min(distances))
+        if (
+            minimum_distance_squared is None
+            or local_minimum < minimum_distance_squared
+        ):
+            minimum_distance_squared = local_minimum
+            closest_book_pixels = []
+        if local_minimum == minimum_distance_squared:
+            for index in np.flatnonzero(distances == local_minimum):
+                closest_book_pixels.append(
+                    (int(book_rows[index]), int(book_columns[index]))
+                )
+    unique = np.asarray(sorted(set(closest_book_pixels)), dtype=float)
+    return (float(np.mean(unique[:, 1])), float(np.mean(unique[:, 0])))
 
 
 def project_recorded_contact(
@@ -183,6 +233,53 @@ def project_recorded_contact(
     )
 
 
+def project_recorded_contact_to_cover(
+    *,
+    center_px,
+    intrinsics,
+    torso_head_states,
+    cover_z_base_m,
+    camera_to_base,
+):
+    """Intersect a recorded image ray with the horizontal book-cover plane."""
+
+    u, v = (float(value) for value in center_px)
+    cover_z = float(cover_z_base_m)
+    ray_camera = (
+        (u - float(intrinsics.cx)) / float(intrinsics.fx),
+        (v - float(intrinsics.cy)) / float(intrinsics.fy),
+        1.0,
+    )
+    projected = []
+    for state in torso_head_states:
+        origin = np.asarray(camera_to_base((0.0, 0.0, 0.0), *state), dtype=float)
+        ray_point = np.asarray(camera_to_base(ray_camera, *state), dtype=float)
+        direction = ray_point - origin
+        if (
+            origin.shape != (3,)
+            or direction.shape != (3,)
+            or not np.all(np.isfinite(origin))
+            or not np.all(np.isfinite(direction))
+            or abs(float(direction[2])) <= 1e-12
+        ):
+            raise ValueError("recorded_cover_projection_invalid")
+        scale = (cover_z - float(origin[2])) / float(direction[2])
+        point = origin + direction * scale
+        if scale <= 0.0 or not np.all(np.isfinite(point)):
+            raise ValueError("recorded_cover_projection_invalid")
+        projected.append(point)
+    if not projected:
+        raise ValueError("recorded_state_count_mismatch")
+    points = np.asarray(projected, dtype=float)
+    median = np.median(points, axis=0)
+    spread = np.ptp(points, axis=0)
+    return ProjectedReplayContact(
+        reference_contact_base_m=tuple(float(value) for value in median),
+        sample_count=int(points.shape[0]),
+        axis_spread_m=tuple(float(value) for value in spread),
+    )
+
+
 def calibrate_replay_pick_reference(
     *,
     h5_path,
@@ -205,40 +302,47 @@ def calibrate_replay_pick_reference(
         depths = recording["observations/depth_head_rgbd"]
         heads = recording["observations/qpos_head"]
         torsos = recording["observations/qpos_torso"]
-        center = find_blue_suction_center(
-            baseline_rgb=images[early_indices[0]],
-            contact_rgb=images[int(contact_frame_index)],
-            roi_xywh=suction_roi_xywh,
-        )
         intrinsics = scale_intrinsics(
             source_intrinsics,
             source_size=source_size,
             target_size=(int(images.shape[2]), int(images.shape[1])),
         )
-        projected = project_recorded_contact(
-            center_px=center,
-            depths_mm=[depths[index] for index in early_indices],
-            intrinsics=intrinsics,
-            torso_head_states=[
-                (
-                    float(torsos[index, 0]),
-                    float(heads[index, 0]),
-                    float(heads[index, 1]),
-                )
-                for index in early_indices
-            ],
-            camera_to_base=camera_to_base,
-        )
+        states = [
+            (
+                float(torsos[index, 0]),
+                float(heads[index, 0]),
+                float(heads[index, 1]),
+            )
+            for index in early_indices
+        ]
         first = early_indices[0]
-        book = detect_recorded_book(
+        detected_book = detect_recorded_book(
             images[first],
             depths[first],
             intrinsics,
             float(torsos[first, 0]),
             (float(heads[first, 0]), float(heads[first, 1])),
         )
+        book_mask = decode_bbox_rle(
+            image_shape=(int(images.shape[1]), int(images.shape[2])),
+            bbox=detected_book.observation.bbox,
+            counts=detected_book.observation.rle_counts,
+        )
+        center = find_blue_book_contact_pixel(
+            baseline_rgb=images[first],
+            contact_rgb=images[int(contact_frame_index)],
+            roi_xywh=suction_roi_xywh,
+            book_mask=book_mask,
+        )
+        projected = project_recorded_contact_to_cover(
+            center_px=center,
+            intrinsics=intrinsics,
+            torso_head_states=states,
+            cover_z_base_m=detected_book.geometry.suction_point[2],
+            camera_to_base=camera_to_base,
+        )
     long_inset, right_inset = insets_for_contact_point(
-        book,
+        detected_book.geometry,
         projected.reference_contact_base_m,
     )
     return ReplayPickReference(

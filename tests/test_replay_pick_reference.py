@@ -1,17 +1,20 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import h5py
 import numpy as np
 
-from book_geometry import BookGeometry, CameraIntrinsics
+from book_geometry import BookGeometry, BookMask, CameraIntrinsics
 from replay_pick_reference import (
     ReplayPickReference,
     calibrate_replay_pick_reference,
+    find_blue_book_contact_pixel,
     find_blue_suction_center,
     load_replay_pick_reference,
     project_recorded_contact,
+    project_recorded_contact_to_cover,
     save_replay_pick_reference,
     scale_intrinsics,
 )
@@ -22,7 +25,7 @@ class ReplayPickReferenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "pick.h5"
             images = np.zeros((4, 20, 20, 3), dtype=np.uint8)
-            images[3, 10:14, 10:14] = (0, 0, 255)
+            images[3, 10:14, 14:18] = (0, 0, 255)
             depths = np.full((4, 20, 20), 1000, dtype=np.uint16)
             with h5py.File(path, "w") as recording:
                 recording.create_dataset("observation/image", data=images)
@@ -37,7 +40,7 @@ class ReplayPickReferenceTests(unittest.TestCase):
                 )
 
             geometry = BookGeometry(
-                suction_point=(0.20, 0.20, 1.0),
+                suction_point=(0.35, 0.25, 1.0),
                 long_axis=(1.0, 0.0, 0.0),
                 short_axis_right_to_left=(0.0, 1.0, 0.0),
                 long_extent_m=0.30,
@@ -45,6 +48,13 @@ class ReplayPickReferenceTests(unittest.TestCase):
                 confidence=0.9,
                 long_inset_m=0.13,
                 right_inset_m=0.10,
+            )
+            observation = BookMask(
+                confidence=0.9,
+                bbox=(4, 4, 10, 10),
+                rle_counts=(0, 100),
+                image_width=20,
+                image_height=20,
             )
 
             result = calibrate_replay_pick_reference(
@@ -54,19 +64,22 @@ class ReplayPickReferenceTests(unittest.TestCase):
                 early_frame_indices=(0, 1, 2),
                 source_intrinsics=CameraIntrinsics(10.0, 10.0, 10.0, 10.0),
                 source_size=(20, 20),
-                suction_roi_xywh=(8, 8, 8, 8),
-                detect_recorded_book=lambda *_args: geometry,
+                suction_roi_xywh=(10, 8, 10, 8),
+                detect_recorded_book=lambda *_args: SimpleNamespace(
+                    observation=observation,
+                    geometry=geometry,
+                ),
                 camera_to_base=lambda point, *_state: point,
             )
 
         self.assertEqual(result.contact_frame_index, 3)
         self.assertEqual(result.early_frame_indices, (0, 1, 2))
-        self.assertEqual(result.suction_center_px, (11.5, 11.5))
+        self.assertEqual(result.suction_center_px, (13.0, 11.5))
         np.testing.assert_allclose(
-            result.reference_contact_base_m, (0.15, 0.15, 1.0), atol=1e-12
+            result.reference_contact_base_m, (0.30, 0.15, 1.0), atol=1e-12
         )
         self.assertAlmostEqual(result.long_inset_m, 0.08)
-        self.assertAlmostEqual(result.right_inset_m, 0.05)
+        self.assertAlmostEqual(result.right_inset_m, 0.0)
         self.assertEqual(result.sample_count, 3)
         self.assertEqual(result.axis_spread_m, (0.0, 0.0, 0.0))
 
@@ -95,6 +108,22 @@ class ReplayPickReferenceTests(unittest.TestCase):
         )
 
         self.assertEqual(center, (39.5, 24.5))
+
+    def test_finds_book_surface_point_nearest_blue_suction_tip(self):
+        baseline = np.zeros((20, 20, 3), dtype=np.uint8)
+        contact = baseline.copy()
+        contact[10:14, 14:18] = (0, 0, 255)
+        book_mask = np.zeros((20, 20), dtype=bool)
+        book_mask[4:14, 4:14] = True
+
+        point = find_blue_book_contact_pixel(
+            baseline_rgb=baseline,
+            contact_rgb=contact,
+            roi_xywh=(10, 8, 10, 8),
+            book_mask=book_mask,
+        )
+
+        self.assertEqual(point, (13.0, 11.5))
 
     def test_rejects_contact_frame_without_new_blue_component(self):
         image = np.zeros((20, 20, 3), dtype=np.uint8)
@@ -130,6 +159,27 @@ class ReplayPickReferenceTests(unittest.TestCase):
         np.testing.assert_allclose(
             result.axis_spread_m,
             (0.2, 0.1, 0.2),
+            atol=1e-12,
+        )
+
+    def test_projects_contact_ray_to_recorded_cover_plane(self):
+        result = project_recorded_contact_to_cover(
+            center_px=(2.0, 1.0),
+            intrinsics=CameraIntrinsics(2.0, 2.0, 0.0, 0.0),
+            torso_head_states=[(0.2, 0.0, 0.25)] * 3,
+            cover_z_base_m=2.0,
+            camera_to_base=lambda point, *_state: point,
+        )
+
+        self.assertEqual(result.sample_count, 3)
+        np.testing.assert_allclose(
+            result.reference_contact_base_m,
+            (2.0, 1.0, 2.0),
+            atol=1e-12,
+        )
+        np.testing.assert_allclose(
+            result.axis_spread_m,
+            (0.0, 0.0, 0.0),
             atol=1e-12,
         )
 
