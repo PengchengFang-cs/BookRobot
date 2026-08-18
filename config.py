@@ -5,6 +5,7 @@
 
 import math
 import os
+from pathlib import Path
 
 
 # 说出这些词时，程序会把它们换成统一的英文名字。
@@ -100,6 +101,11 @@ BOOK_RIGHT_INSET_M = 0.10
 BOOK_MIN_EDGE_CLEARANCE_M = 0.015
 BOOK_MIN_CONFIDENCE = 0.25
 BOOK_MAX_RESULTS = 5
+
+# 每个 Pick DataReplay 资产从录制图像标定出的真实吸盘接触参考。
+REPLAY_PICK_REFERENCE_PATH = (
+    Path(__file__).resolve().parent / "config" / "stage1_pick_reference.json"
+)
 
 
 # 导航：水果约在一米外，机器人停在水果前方，让机械臂还留有空间。

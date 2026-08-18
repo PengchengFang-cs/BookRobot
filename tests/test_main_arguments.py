@@ -46,6 +46,25 @@ class MainArgumentTests(unittest.TestCase):
         self.assertIn("BookAlignmentNavigator(mode=args.book_align_mode)", text)
         self.assertIn("Stage1BookPickReplayer()", text)
 
+    def test_book_modes_load_and_pass_the_replay_reference(self):
+        from pathlib import Path
+
+        from config import REPLAY_PICK_REFERENCE_PATH
+
+        self.assertEqual(
+            REPLAY_PICK_REFERENCE_PATH,
+            Path(__file__).resolve().parents[1]
+            / "config"
+            / "stage1_pick_reference.json",
+        )
+        text = (Path(__file__).resolve().parents[1] / "main.py").read_text(
+            encoding="utf-8"
+        )
+        branch = text[text.index("if args.book_align or args.book_pick:") :]
+        self.assertIn("load_replay_pick_reference", branch)
+        self.assertIn("REPLAY_PICK_REFERENCE_PATH", branch)
+        self.assertIn("replay_reference", branch)
+
 
 if __name__ == "__main__":
     unittest.main()

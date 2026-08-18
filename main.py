@@ -78,6 +78,8 @@ def run_real(args):
     try:
         if args.book_align or args.book_pick:
             from book_navigation import BookAlignmentNavigator
+            from config import REPLAY_PICK_REFERENCE_PATH
+            from replay_pick_reference import load_replay_pick_reference
             from tf2_ros import Buffer, TransformListener
 
             tf_buffer = Buffer()
@@ -85,6 +87,9 @@ def run_real(args):
             vision = Vision(node, tf_buffer)
 
             navigator = BookAlignmentNavigator(mode=args.book_align_mode)
+            replay_reference = load_replay_pick_reference(
+                REPLAY_PICK_REFERENCE_PATH
+            )
             say = lambda text: print(f"[机器人] {text}")
             if args.book_pick:
                 from book_pick_replay import Stage1BookPickReplayer
@@ -93,10 +98,16 @@ def run_real(args):
                     vision,
                     navigator,
                     Stage1BookPickReplayer(),
+                    replay_reference,
                     say,
                 )
             else:
-                run_book_alignment_once(vision, navigator, say)
+                run_book_alignment_once(
+                    vision,
+                    navigator,
+                    replay_reference,
+                    say,
+                )
             print(f"[视觉] 调试图: {vision.debug_path}")
             return
 

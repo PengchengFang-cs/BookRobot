@@ -15,7 +15,7 @@ Wanda 头部彩色图
 
 Wanda 当前 Orbbec 驱动虽然发布在 `image_raw` 名称下，但已经启用硬件对齐、彩色目标对齐、深度注册和帧同步；实际彩色与深度消息同为 `1920×1080`、同属彩色光学 frame。代码会在最近几帧中配对同一组 RGB-D/CameraInfo，并使用最接近彩色图拍摄时刻的头部和升降柱关节值。不同 capture 不会混用，同一 capture 也不会重复请求 5090。
 
-当前阶段没有修改 `navigation.py`、`arm.py` 及其固定距离，也没有把新视觉接入完整任务。只测试感知时使用：
+只测试感知时使用：
 
 ```bash
 cd /home/unix_ai/fpc
@@ -34,6 +34,33 @@ python3 test_book_perception.py
 ```
 
 结果按置信度从高到低排列，只保留置信度不低于 `0.25` 且三维几何有效的书本，最多返回 5 本；不足 5 本时返回实际数量。
+
+## DataReplay 两级对位
+
+Stage 1 抓书不再把 `0.48 m` 当作最终抓取坐标。当前流程分成两级：
+
+```text
+当前 RGB-D 找到并锁定目标书
+  -> 0.48 m 只用于进入粗略工作范围
+  -> 停稳后重新拍摄并用 odom/IMU 重关联同一本书
+  -> 读取 config/stage1_pick_reference.json
+  -> 按录制图像中的蓝色吸盘中心计算精确 X/Y/Z
+  -> X/Y 底盘对位，Z 平移整条 Pick torso 轨迹
+  -> 才执行 DataReplay
+```
+
+参考 JSON 来自只读 Pick HDF5：第 300 帧蓝色吸盘中心对应回第
+`0,10,20,40,80` 帧无遮挡深度，再变换到录制时的 `base_link`。标定命令
+只读取录制数据、调用书本视觉并生成 JSON/叠加图，不发送机器人运动命令：
+
+```bash
+python3 scripts/calibrate_replay_pick_reference.py \
+  --h5 /home/unix_ai/DataCollector/DataReplay_v3/v3_assets/takes/pi05_wanda_new1.2_20260816_034411.h5 \
+  --output config/stage1_pick_reference.json \
+  --overlay logs/stage1_pick_reference_overlay.jpg
+```
+
+`./run.sh --book-align --book-align-mode vector` 执行两级底盘对位并在最终测量后退出；`./run.sh --book-pick --book-align-mode vector` 在同一结果上继续执行一次 Pick。两者都要求参考 JSON 已经生成。
 
 运行前还需要满足：
 
