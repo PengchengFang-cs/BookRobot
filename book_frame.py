@@ -1,11 +1,21 @@
 """One-frame book perception shared by ROS and offline tests."""
 
+from dataclasses import dataclass
+
 from book_geometry import BookGeometryError, reconstruct_table_book
 from config import (
     BOOK_LONG_INSET_M,
+    BOOK_MAX_RESULTS,
     BOOK_MIN_EDGE_CLEARANCE_M,
+    BOOK_MIN_CONFIDENCE,
     BOOK_RIGHT_INSET_M,
 )
+
+
+@dataclass(frozen=True)
+class DetectedBook:
+    observation: object
+    geometry: object
 
 
 def detect_book_frame(
@@ -21,17 +31,26 @@ def detect_book_frame(
     long_inset_m=BOOK_LONG_INSET_M,
     right_inset_m=BOOK_RIGHT_INSET_M,
     minimum_edge_clearance_m=BOOK_MIN_EDGE_CLEARANCE_M,
-    on_result=None,
+    minimum_confidence=BOOK_MIN_CONFIDENCE,
+    maximum_results=BOOK_MAX_RESULTS,
+    on_results=None,
 ):
-    """Return the highest-confidence mask with usable local RGB-D geometry."""
+    """Return up to five confidence-ranked masks with usable RGB-D geometry."""
 
-    observations = book_client.detect(
-        color_bgr,
-        captured_at_ns=captured_at_ns,
-        base_motion_epoch=base_motion_epoch,
-        head_motion_epoch=head_motion_epoch,
+    observations = sorted(
+        book_client.detect(
+            color_bgr,
+            captured_at_ns=captured_at_ns,
+            base_motion_epoch=base_motion_epoch,
+            head_motion_epoch=head_motion_epoch,
+        ),
+        key=lambda item: item.confidence,
+        reverse=True,
     )
+    results = []
     for observation in observations:
+        if observation.confidence < minimum_confidence:
+            continue
         try:
             geometry = reconstruct_table_book(
                 observation=observation,
@@ -42,9 +61,12 @@ def detect_book_frame(
                 right_inset_m=right_inset_m,
                 minimum_edge_clearance_m=minimum_edge_clearance_m,
             )
-            if on_result is not None:
-                on_result(observation, geometry)
-            return geometry
+            results.append(DetectedBook(observation=observation, geometry=geometry))
+            if len(results) == maximum_results:
+                break
         except BookGeometryError:
             continue
-    return None
+    selected = tuple(results)
+    if on_results is not None:
+        on_results(selected)
+    return selected

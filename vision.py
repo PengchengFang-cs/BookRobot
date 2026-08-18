@@ -1,5 +1,6 @@
 """视觉积木：5090 分割书本，机器人本地用深度计算吸取点。"""
 
+from dataclasses import dataclass
 import time
 from pathlib import Path
 
@@ -24,6 +25,14 @@ from config import (
 )
 from geometry import apply_ros_transform, camera_point_to_base
 from sensor_sync import SensorSynchronizer
+
+
+@dataclass(frozen=True)
+class LocatedBook:
+    observation: object
+    geometry: object
+    frame_id: str
+    suction_point: tuple[float, float, float]
 
 
 class Vision:
@@ -102,27 +111,45 @@ class Vision:
             return None
         return {name: self.joints[name] for name in RIGHT_ARM_JOINTS}
 
-    def _save_debug_overlay(self, color, observation, geometry):
-        mask = decode_bbox_rle(
-            image_shape=color.shape[:2],
-            bbox=observation.bbox,
-            counts=observation.rle_counts,
-        )
+    def _save_debug_overlay(self, color, books):
         overlay = color.copy()
-        overlay[mask] = (0, 220, 0)
-        color[:] = cv2.addWeighted(color, 0.65, overlay, 0.35, 0.0)
-        x, y, width, height = observation.bbox
-        cv2.rectangle(color, (x, y), (x + width, y + height), (0, 255, 0), 3)
-        point = geometry.suction_point
-        cv2.putText(
-            color,
-            f"book suction=({point[0]:.3f},{point[1]:.3f},{point[2]:.3f})m",
-            (x, max(30, y - 10)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (0, 255, 0),
-            2,
+        colors = (
+            (0, 220, 0),
+            (255, 120, 0),
+            (0, 180, 255),
+            (220, 0, 220),
+            (255, 200, 0),
         )
+        for index, book in enumerate(books):
+            observation = book.observation
+            mask = decode_bbox_rle(
+                image_shape=color.shape[:2],
+                bbox=observation.bbox,
+                counts=observation.rle_counts,
+            )
+            overlay[mask] = colors[index]
+        color[:] = cv2.addWeighted(color, 0.65, overlay, 0.35, 0.0)
+        for index, book in enumerate(books):
+            observation = book.observation
+            geometry = book.geometry
+            draw_color = colors[index]
+            x, y, width, height = observation.bbox
+            cv2.rectangle(
+                color, (x, y), (x + width, y + height), draw_color, 3
+            )
+            point = geometry.suction_point
+            cv2.putText(
+                color,
+                (
+                    f"#{index + 1} conf={observation.confidence:.2f} "
+                    f"p=({point[0]:.2f},{point[1]:.2f},{point[2]:.2f})m"
+                ),
+                (x, max(30, y - 10)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.58,
+                draw_color,
+                2,
+            )
         cv2.imwrite(str(self.debug_path), color)
 
     def _detect_once(self, snapshot, joints):
@@ -139,7 +166,7 @@ class Vision:
         head_pitch = joints["joint_head1"]
         captured_at_ns = snapshot.captured_at_ns
 
-        geometry = detect_book_frame(
+        books = detect_book_frame(
             book_client=self.book_client,
             color_bgr=color,
             depth_m=depth,
@@ -155,13 +182,11 @@ class Vision:
             captured_at_ns=captured_at_ns,
             base_motion_epoch=f"fruittest-base-capture-{captured_at_ns}",
             head_motion_epoch=f"fruittest-head-capture-{captured_at_ns}",
-            on_result=lambda observation, geometry: self._save_debug_overlay(
-                color, observation, geometry
-            ),
         )
-        if geometry is None:
+        if not books:
             return None
-        return geometry, captured_at_ns
+        self._save_debug_overlay(color, books)
+        return books, captured_at_ns
 
     def find(self, target="book", frame="map"):
         if target != "book":
@@ -186,24 +211,34 @@ class Vision:
                 detected = self._detect_once(snapshot, joints)
                 if detected is None:
                     continue
-                geometry, captured_at_ns = detected
-                point_base = geometry.suction_point
-                if frame == "base_link":
-                    result = point_base
-                elif frame == "map":
+                books, captured_at_ns = detected
+                transform = None
+                if frame == "map":
                     tf = self.tf_buffer.lookup_transform(
                         "map",
                         "base_link",
                         Time(nanoseconds=captured_at_ns),
                     )
-                    result = apply_ros_transform(point_base, tf.transform)
-                else:
+                    transform = tf.transform
+                elif frame != "base_link":
                     raise ValueError(f"不支持的坐标系: {frame}")
-                print(
-                    f"[视觉] book suction @ {frame}: "
-                    f"x={result[0]:.3f}, y={result[1]:.3f}, z={result[2]:.3f}"
-                )
-                return result
+                results = []
+                for index, book in enumerate(books, 1):
+                    point = book.geometry.suction_point
+                    if transform is not None:
+                        point = apply_ros_transform(point, transform)
+                    located = LocatedBook(
+                        observation=book.observation,
+                        geometry=book.geometry,
+                        frame_id=frame,
+                        suction_point=tuple(float(value) for value in point),
+                    )
+                    results.append(located)
+                    print(
+                        f"[视觉] book #{index} suction @ {frame}: "
+                        f"x={point[0]:.3f}, y={point[1]:.3f}, z={point[2]:.3f}"
+                    )
+                return results
             except Exception as error:
                 self.node.get_logger().warning(f"这一帧不能用: {error}")
-        return None
+        return []

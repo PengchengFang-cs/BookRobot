@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-"""Capture one book suction point without constructing motion controllers."""
+"""Capture up to five book suction points without motion controllers."""
 
 import json
 
 
-def format_result(point):
+def format_result(books):
     payload = {
-        "ok": point is not None,
+        "ok": bool(books),
         "frame_id": "base_link",
-        "suction_point_m": None if point is None else [float(value) for value in point],
+        "book_count": len(books),
+        "books": [
+            {
+                "confidence": float(book.observation.confidence),
+                "bbox_xywh": [int(value) for value in book.observation.bbox],
+                "suction_point_m": [float(value) for value in book.suction_point],
+            }
+            for book in books
+        ],
     }
     return json.dumps(payload, ensure_ascii=False, allow_nan=False, sort_keys=True)
 
@@ -26,9 +34,9 @@ def main():
     tf_listener = TransformListener(tf_buffer, node)
     vision = Vision(node, tf_buffer)
     try:
-        point = vision.find("book", frame="base_link")
-        print(format_result(point))
-        return 0 if point is not None else 2
+        books = vision.find("book", frame="base_link")
+        print(format_result(books))
+        return 0 if books else 2
     finally:
         # Retain the listener until all subscriptions are stopped.
         del tf_listener

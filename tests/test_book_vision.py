@@ -17,9 +17,9 @@ class _FakeBookClient:
 
 
 class BookVisionIntegrationTests(unittest.TestCase):
-    def observation(self):
+    def observation(self, confidence=0.9):
         return BookMask(
-            confidence=0.9,
+            confidence=confidence,
             bbox=(100, 80, 120, 80),
             rle_counts=(0, 120 * 80),
             image_width=320,
@@ -43,8 +43,9 @@ class BookVisionIntegrationTests(unittest.TestCase):
             head_motion_epoch="head-1",
         )
 
-        self.assertAlmostEqual(result.suction_point[0], 0.38, places=3)
-        self.assertAlmostEqual(result.suction_point[1], 0.0, places=3)
+        self.assertEqual(len(result), 1)
+        self.assertAlmostEqual(result[0].geometry.suction_point[0], 0.38, places=3)
+        self.assertAlmostEqual(result[0].geometry.suction_point[1], 0.0, places=3)
         self.assertEqual(client.calls[0][1]["captured_at_ns"], 123)
         self.assertTrue(np.array_equal(client.calls[0][0], color))
 
@@ -60,7 +61,7 @@ class BookVisionIntegrationTests(unittest.TestCase):
             base_motion_epoch="base-1",
             head_motion_epoch="head-1",
         )
-        self.assertIsNone(result)
+        self.assertEqual(result, ())
 
     def test_skips_invalid_high_confidence_mask(self):
         invalid = BookMask(
@@ -85,17 +86,20 @@ class BookVisionIntegrationTests(unittest.TestCase):
             head_motion_epoch="head-1",
         )
 
-        self.assertIsNotNone(result)
-        self.assertAlmostEqual(result.confidence, 0.9)
+        self.assertEqual(len(result), 1)
+        self.assertAlmostEqual(result[0].geometry.confidence, 0.9)
 
-    def test_reports_selected_observation_for_debug_overlay(self):
-        observation = self.observation()
-        client = _FakeBookClient((observation,))
+    def test_filters_threshold_sorts_and_returns_actual_count(self):
+        client = _FakeBookClient(
+            tuple(
+                self.observation(confidence)
+                for confidence in (0.40, 0.24, 0.25, 0.80)
+            )
+        )
         depth = np.zeros((240, 320), dtype=np.float64)
         depth[80:160, 100:220] = 1.0
-        selected = []
 
-        detect_book_frame(
+        result = detect_book_frame(
             book_client=client,
             color_bgr=np.zeros((240, 320, 3), dtype=np.uint8),
             depth_m=depth,
@@ -104,11 +108,69 @@ class BookVisionIntegrationTests(unittest.TestCase):
             captured_at_ns=1,
             base_motion_epoch="base-1",
             head_motion_epoch="head-1",
-            on_result=lambda mask, geometry: selected.append((mask, geometry)),
         )
 
-        self.assertIs(selected[0][0], observation)
-        self.assertAlmostEqual(selected[0][1].suction_point[0], 0.38, places=3)
+        self.assertEqual(
+            [item.observation.confidence for item in result],
+            [0.80, 0.40, 0.25],
+        )
+
+    def test_returns_five_highest_geometry_valid_books(self):
+        invalid = BookMask(
+            confidence=0.99,
+            bbox=(0, 0, 20, 20),
+            rle_counts=(0, 400),
+            image_width=320,
+            image_height=240,
+        )
+        client = _FakeBookClient(
+            (invalid,)
+            + tuple(
+                self.observation(confidence)
+                for confidence in (0.30, 0.40, 0.50, 0.60, 0.70, 0.80)
+            )
+        )
+        depth = np.zeros((240, 320), dtype=np.float64)
+        depth[80:160, 100:220] = 1.0
+
+        result = detect_book_frame(
+            book_client=client,
+            color_bgr=np.zeros((240, 320, 3), dtype=np.uint8),
+            depth_m=depth,
+            intrinsics=CameraIntrinsics(400.0, 400.0, 0.0, 120.0),
+            camera_to_base=lambda point: point,
+            captured_at_ns=1,
+            base_motion_epoch="base-1",
+            head_motion_epoch="head-1",
+        )
+
+        self.assertEqual(
+            [item.observation.confidence for item in result],
+            [0.80, 0.70, 0.60, 0.50, 0.40],
+        )
+
+    def test_reports_selected_observation_for_debug_overlay(self):
+        observation = self.observation()
+        client = _FakeBookClient((observation,))
+        depth = np.zeros((240, 320), dtype=np.float64)
+        depth[80:160, 100:220] = 1.0
+        selected = []
+
+        result = detect_book_frame(
+            book_client=client,
+            color_bgr=np.zeros((240, 320, 3), dtype=np.uint8),
+            depth_m=depth,
+            intrinsics=CameraIntrinsics(400.0, 400.0, 0.0, 120.0),
+            camera_to_base=lambda point: point,
+            captured_at_ns=1,
+            base_motion_epoch="base-1",
+            head_motion_epoch="head-1",
+            on_results=selected.extend,
+        )
+
+        self.assertEqual(selected, list(result))
+        self.assertIs(selected[0].observation, observation)
+        self.assertAlmostEqual(selected[0].geometry.suction_point[0], 0.38, places=3)
 
 
 if __name__ == "__main__":

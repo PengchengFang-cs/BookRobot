@@ -8,8 +8,9 @@ def run_one_fruit(fruit, vision, navigation, arm, say=print):
 
     target_map = None
     for direction in range(SCAN_COUNT):
-        target_map = vision.find(fruit, frame="map")
-        if target_map is not None:
+        books = vision.find(fruit, frame="map")
+        if books:
+            target_map = books[0].suction_point
             break
         if direction + 1 < SCAN_COUNT:
             say("这一面没有，转九十度继续看")
@@ -24,8 +25,10 @@ def run_one_fruit(fruit, vision, navigation, arm, say=print):
     navigation.go(navigation.approach_pose(target_map))
 
     # 走动后再看一次；如果太近看不到，就用刚才记住的地图坐标。
-    target_base = vision.find(fruit, frame="base_link")
-    if target_base is None:
+    books = vision.find(fruit, frame="base_link")
+    if books:
+        target_base = books[0].suction_point
+    else:
         target_base = navigation.map_point_to_base(target_map)
 
     say("开始用 MoveIt 规划抓取")
