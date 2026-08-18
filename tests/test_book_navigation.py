@@ -47,6 +47,17 @@ class _Runtime:
 
 
 class BookNavigationTests(unittest.TestCase):
+    @patch("book_navigation.load_navnav_runtime")
+    def test_real_runtime_is_loaded_only_when_alignment_starts(self, load_runtime):
+        runtime = _Runtime([])
+        load_runtime.return_value = runtime
+
+        navigator = BookAlignmentNavigator()
+
+        load_runtime.assert_not_called()
+        navigator.align(reference=(0.9, -0.3, 0.75), observed=(1.0, -0.3, 0.75))
+        load_runtime.assert_called_once_with()
+
     @patch("book_navigation.importlib.import_module")
     def test_loader_gets_adapter_from_its_real_submodule(self, import_module):
         package = SimpleNamespace(

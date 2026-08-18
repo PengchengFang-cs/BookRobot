@@ -37,9 +37,11 @@ class BookAlignmentNavigator:
     """Execute one Y/Z/X alignment plan while preserving the current yaw."""
 
     def __init__(self, runtime=None):
-        self.runtime = runtime or load_navnav_runtime()
+        self.runtime = runtime
 
     def align(self, *, reference, observed):
+        if self.runtime is None:
+            self.runtime = load_navnav_runtime()
         adapter = self.runtime.WandaRos2Adapter()
         try:
             adapter.preflight()
