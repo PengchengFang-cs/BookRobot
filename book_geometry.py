@@ -1,6 +1,7 @@
 """ROS-free table-book mask and suction-point geometry."""
 
 from dataclasses import dataclass
+import math
 from typing import Callable, Sequence
 
 import numpy as np
@@ -37,6 +38,68 @@ class BookGeometry:
     confidence: float
     long_inset_m: float
     right_inset_m: float
+
+
+def _book_near_right_corner_xy(geometry):
+    if not isinstance(geometry, BookGeometry):
+        _fail("book_geometry_invalid")
+    suction_xy = np.asarray(geometry.suction_point[:2], dtype=float)
+    long_axis = np.asarray(geometry.long_axis[:2], dtype=float)
+    short_axis = np.asarray(geometry.short_axis_right_to_left[:2], dtype=float)
+    values = np.concatenate((suction_xy, long_axis, short_axis))
+    if not np.all(np.isfinite(values)):
+        _fail("book_geometry_invalid")
+    return (
+        suction_xy
+        - long_axis * float(geometry.long_inset_m)
+        - short_axis * float(geometry.right_inset_m)
+    )
+
+
+def contact_point_for_insets(geometry, *, long_inset_m, right_inset_m):
+    """Return a cover point at asset-specific book-local metric insets."""
+
+    long_inset = float(long_inset_m)
+    right_inset = float(right_inset_m)
+    if (
+        not math.isfinite(long_inset)
+        or not math.isfinite(right_inset)
+        or long_inset < 0.0
+        or right_inset < 0.0
+        or long_inset > float(geometry.long_extent_m)
+        or right_inset > float(geometry.short_extent_m)
+    ):
+        _fail("contact_insets_out_of_bounds")
+    corner = _book_near_right_corner_xy(geometry)
+    long_axis = np.asarray(geometry.long_axis[:2], dtype=float)
+    short_axis = np.asarray(geometry.short_axis_right_to_left[:2], dtype=float)
+    point_xy = corner + long_axis * long_inset + short_axis * right_inset
+    return (
+        float(point_xy[0]),
+        float(point_xy[1]),
+        float(geometry.suction_point[2]),
+    )
+
+
+def insets_for_contact_point(geometry, contact_point):
+    """Express a base-link contact point in the geometry's two cover axes."""
+
+    point = np.asarray(contact_point, dtype=float)
+    if point.shape != (3,) or not np.all(np.isfinite(point)):
+        _fail("contact_point_invalid")
+    delta = point[:2] - _book_near_right_corner_xy(geometry)
+    long_axis = np.asarray(geometry.long_axis[:2], dtype=float)
+    short_axis = np.asarray(geometry.short_axis_right_to_left[:2], dtype=float)
+    long_inset = float(delta @ long_axis)
+    right_inset = float(delta @ short_axis)
+    if (
+        long_inset < 0.0
+        or right_inset < 0.0
+        or long_inset > float(geometry.long_extent_m)
+        or right_inset > float(geometry.short_extent_m)
+    ):
+        _fail("contact_point_outside_book")
+    return (long_inset, right_inset)
 
 
 def _fail(code):
