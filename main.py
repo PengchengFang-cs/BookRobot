@@ -44,6 +44,12 @@ def arguments():
         action="store_true",
         help="检测书本并对位到 DataReplay 固定抓取点，不抓取",
     )
+    parser.add_argument(
+        "--book-align-mode",
+        choices=("legacy", "vector"),
+        default="legacy",
+        help="书本底盘对位方式；默认保留原 legacy，vector 合并 X/Y 位移",
+    )
     return parser.parse_args()
 
 
@@ -75,7 +81,7 @@ def run_real(args):
 
             run_book_alignment_once(
                 vision,
-                BookAlignmentNavigator(),
+                BookAlignmentNavigator(mode=args.book_align_mode),
                 lambda text: print(f"[机器人] {text}"),
             )
             print(f"[视觉] 调试图: {vision.debug_path}")

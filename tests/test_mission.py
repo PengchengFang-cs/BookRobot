@@ -49,7 +49,13 @@ class _AlignmentNavigator:
 
     def align(self, *, reference, observed):
         self.calls.append((reference, observed))
-        return SimpleNamespace(command_count=2)
+        return SimpleNamespace(
+            command_count=2,
+            mode="vector",
+            odom_dx_m=-0.012,
+            odom_dy_m=-0.024,
+            imu_dyaw_rad=0.002,
+        )
 
 
 class MissionMultiBookTests(unittest.TestCase):
@@ -101,6 +107,8 @@ class BookAlignmentMissionTests(unittest.TestCase):
         self.assertIs(result.initial.book, initial_near)
         self.assertIs(result.final.book, final_near)
         self.assertEqual(result.command_count, 2)
+        self.assertEqual(result.navigation_mode, "vector")
+        self.assertTrue(result.xy_within_tolerance)
         self.assertAlmostEqual(
             result.z_offset_m,
             initial_near.suction_point[2] - result.initial.reference_m[2],
@@ -116,6 +124,10 @@ class BookAlignmentMissionTests(unittest.TestCase):
         self.assertTrue(any("初始偏差" in message for message in messages))
         self.assertTrue(any("最终偏差" in message for message in messages))
         self.assertTrue(any("固定Z偏移=0.005 m" in message for message in messages))
+        self.assertTrue(any("odom dx=-0.012 m" in message for message in messages))
+        self.assertTrue(any("dy=-0.024 m" in message for message in messages))
+        self.assertTrue(any("yaw=0.002 rad" in message for message in messages))
+        self.assertTrue(any("XY验收=达标" in message for message in messages))
 
     def test_rejects_empty_initial_detection(self):
         vision = _Vision([[]])

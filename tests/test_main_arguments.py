@@ -11,6 +11,17 @@ class MainArgumentTests(unittest.TestCase):
             args = arguments()
 
         self.assertTrue(args.book_align)
+        self.assertEqual(args.book_align_mode, "legacy")
+
+    def test_accepts_vector_book_alignment_mode(self):
+        with patch.object(
+            sys,
+            "argv",
+            ["main.py", "--book-align", "--book-align-mode", "vector"],
+        ):
+            args = arguments()
+
+        self.assertEqual(args.book_align_mode, "vector")
 
     def test_book_alignment_branch_precedes_legacy_navigation_setup(self):
         from pathlib import Path
@@ -21,6 +32,7 @@ class MainArgumentTests(unittest.TestCase):
         branch = text.index("if args.book_align:")
         legacy = text.index("from navigation import Navigation", branch)
         self.assertLess(branch, legacy)
+        self.assertIn("BookAlignmentNavigator(mode=args.book_align_mode)", text)
 
 
 if __name__ == "__main__":

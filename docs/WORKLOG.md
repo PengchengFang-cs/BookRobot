@@ -29,6 +29,7 @@
 - 根据旧 Pipeline 新的 Stage 1 Z-offset 设计，更正 FPC 职责：导航阶段预置升降柱仍会被 DataReplay 的绝对 `0.20 m` torso 帧覆盖，因此 commit `49ef5ca` 的导航阶段高度补偿只适合独立测试，不是最终抓取链路。FPC 现改为按 X/Y 选书、仅向 `navnav_final` 传 X/Y、固定输出一次 `z_offset_m=observed_z-reference_z`；±30 mm 外在导航前失败，合法 `0.0 m` 保留。commit `da935426c9d0e97d2f409d534082253ab28eb18c` 已直接部署到 Wanda；完整本地 55 项测试、机器人端 15 项纯测试和模块编译通过，未执行运动。机械臂、DataReplay token 和 D01 由另一条工作线负责。
 - 经用户确认现场可运动后，执行第一次 XY-only 真机对位。五本书检测正常，选中目标初始残差 `dx=-0.012 m, dy=-0.025 m, dz=+0.011 m`；执行 4 条 X/Y 底盘命令后重新检测，最终残差 `dx=+0.008 m, dy=+0.023 m, dz=+0.011 m`。输出的 Pipeline 固定 Z offset 始终为 `+0.011 m`；结束后 odom twist 全零且 `body_joint=0.280 m`，本轮未运行升降、机械臂、DataReplay 或吸盘。最终图保存于非 Git 的 `logs/book_alignment_xy_only_20260818.jpg`；XY 精度问题见 [`BOT-20260818-09`](ROBOT_ISSUES.md#bot-20260818-09)。
 - 用户完成吸盘现场处理后，只读 D01 状态确认右侧 `available=true`、`communication_ok=true`、`healthy=true`、`attachment_state=idle`、`last_error=null`；`BOT-20260818-08` 更新为已解决。本次状态查询未启动吸附。
+- 用户指出上次 XY-only 测试肉眼未见机器人移动。由于当次仅在结束后读取 odom，原记录不能证明实际位移。机器人保持静止时追加 5 次感知：4 次有效目标的 X 跨度约 `1.5 mm`、Y 跨度约 `1.0 mm`，第 5 次明确返回 0 本；静止视觉波动远小于原前后约 48 mm 的 Y 变化。为取得直接运动证据，新增 opt-in `vector` 模式：保留 `legacy` 默认，把 dx/dy 合成为一次前进或倒车向量，并为两种模式记录 task-origin 后的 odom `dx/dy` 与 IMU yaw；60 项本地测试通过，尚未真机运动。
 
 ## 2026-08-17（Asia/Shanghai）
 

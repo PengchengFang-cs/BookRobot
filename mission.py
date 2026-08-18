@@ -6,12 +6,20 @@ from book_alignment import select_alignment_book
 from config import SCAN_ANGLE_RAD, SCAN_COUNT
 
 
+BOOK_ALIGNMENT_XY_TOLERANCE_M = 0.010
+
+
 @dataclass(frozen=True)
 class BookAlignmentRun:
     initial: object
     final: object
     command_count: int
     z_offset_m: float
+    navigation_mode: str
+    odom_dx_m: float
+    odom_dy_m: float
+    imu_dyaw_rad: float
+    xy_within_tolerance: bool
 
 
 def _format_residual(label, target):
@@ -35,17 +43,34 @@ def run_book_alignment_once(vision, navigator, say=print):
         observed=initial.observed_m,
     )
     say(
-        f"导航对位动作完成，共执行 {navigation.command_count} 条 X/Y 命令"
+        f"导航对位动作完成，模式={navigation.mode}，"
+        f"共执行 {navigation.command_count} 条 X/Y 命令"
+    )
+    say(
+        "运动反馈: "
+        f"odom dx={navigation.odom_dx_m:.3f} m, "
+        f"dy={navigation.odom_dy_m:.3f} m, "
+        f"yaw={navigation.imu_dyaw_rad:.3f} rad"
     )
     say(f"Pipeline 固定Z偏移={initial.z_offset_m:.3f} m")
 
     final = select_alignment_book(vision.find("book", frame="base_link"))
     say(_format_residual("最终偏差", final))
+    xy_within_tolerance = (
+        abs(final.residual_m[0]) <= BOOK_ALIGNMENT_XY_TOLERANCE_M
+        and abs(final.residual_m[1]) <= BOOK_ALIGNMENT_XY_TOLERANCE_M
+    )
+    say(f"XY验收={'达标' if xy_within_tolerance else '未达标'}")
     return BookAlignmentRun(
         initial,
         final,
         navigation.command_count,
         initial.z_offset_m,
+        navigation.mode,
+        navigation.odom_dx_m,
+        navigation.odom_dy_m,
+        navigation.imu_dyaw_rad,
+        xy_within_tolerance,
     )
 
 
