@@ -20,7 +20,6 @@ export PYTHONUNBUFFERED=1
 
 if [[ " $* " == *" --book-align "* ]]; then
   source "$DIR/scripts/book_vision_env.sh"
-  "$DIR/release_base.sh"
   exec python3 "$DIR/main.py" "$@"
 fi
 

@@ -27,6 +27,14 @@ class BookAlignLauncherTests(unittest.TestCase):
 
         self.assertNotIn("wait_for_release", branch)
 
+    def test_book_alignment_does_not_release_an_already_enabled_base(self):
+        run_text = (ROOT / "run.sh").read_text(encoding="utf-8")
+        branch_start = run_text.index('if [[ " $* " == *" --book-align "* ]]')
+        branch_end = run_text.index("\nfi", branch_start)
+        branch = run_text[branch_start:branch_end]
+
+        self.assertNotIn("release_base.sh", branch)
+
     def test_vision_environment_matches_running_7443_service(self):
         text = (ROOT / "scripts" / "book_vision_env.sh").read_text(
             encoding="utf-8"
