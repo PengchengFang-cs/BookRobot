@@ -21,7 +21,7 @@
 
 ## 正在进行
 
-- 一次性书本导航对位入口已完成第一次真机闭环；XY/Z 分流已在 FPC 本地实现并通过 55 项测试，等待部署后的非运动验证。后续真机对位只验证 X/Y，Z offset 由尚未部署的旧 Pipeline token/DataReplay 补丁消费。
+- 一次性书本导航对位入口已完成第一次真机闭环；XY/Z 分流已部署到 Wanda，FPC 本地 55 项测试和机器人端 15 项非运动测试通过。后续真机对位只验证 X/Y，Z offset 由尚未部署的旧 Pipeline token/DataReplay 补丁消费。
 - D01 服务运行正常，但右吸盘 Modbus 当前只能写请求、收不到任何回包；软件侧已经排除设备节点、权限、端口占用、地址和波特率，等待现场检查供电和 RS485 物理链路。
 
 ## 当前问题
@@ -33,9 +33,8 @@
 
 ## 下一步
 
-1. 部署 FPC 的 XY/Z 分流，并用纯测试确认导航构建器不再接收视觉 Z。
-2. 等旧 Pipeline 的 Z token/DataReplay 内存偏移补丁进入可部署位置后，对接 FPC 输出的固定 `z_offset_m`。
-3. 后续真机对位继续保存 X/Y 移动前后残差；Z 精度在完整 Pick/Place torso 偏移链路中单独验收。
+1. 等旧 Pipeline 的 Z token/DataReplay 内存偏移补丁进入可部署位置后，对接 FPC 输出的固定 `z_offset_m`。
+2. 后续真机对位继续保存 X/Y 移动前后残差；Z 精度在完整 Pick/Place torso 偏移链路中单独验收。
 
 ## 更新要求
 
