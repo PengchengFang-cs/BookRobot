@@ -22,6 +22,7 @@ from config import (
     JOINT_STATES_TOPIC,
     MERGED_JOINT_STATES_TOPIC,
     VISION_TIMEOUT_S,
+    VISION_WARMUP_S,
 )
 from geometry import apply_ros_transform, camera_point_to_base
 from sensor_sync import SensorSynchronizer
@@ -194,6 +195,9 @@ class Vision:
         started = time.monotonic()
         deadline = started + VISION_TIMEOUT_S
         needed_joints = ("body_joint", "joint_head0", "joint_head1")
+        warmup_deadline = min(deadline, started + VISION_WARMUP_S)
+        while rclpy.ok() and time.monotonic() < warmup_deadline:
+            rclpy.spin_once(self.node, timeout_sec=0.10)
         while rclpy.ok() and time.monotonic() < deadline:
             rclpy.spin_once(self.node, timeout_sec=0.10)
             selected = self.sensor_sync.select(

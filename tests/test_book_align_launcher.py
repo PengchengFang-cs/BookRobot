@@ -7,9 +7,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class BookAlignLauncherTests(unittest.TestCase):
     def test_perception_wait_covers_live_rgbd_startup(self):
-        from config import VISION_TIMEOUT_S
+        from config import VISION_TIMEOUT_S, VISION_WARMUP_S
 
         self.assertEqual(VISION_TIMEOUT_S, 20.0)
+        self.assertEqual(VISION_WARMUP_S, 5.0)
 
     def test_book_alignment_loads_vision_environment_before_moveit_setup(self):
         run_text = (ROOT / "run.sh").read_text(encoding="utf-8")
