@@ -30,8 +30,10 @@ python3 test_book_perception.py
 这个入口只创建相机、关节状态和 TF 订阅，不导入导航或机械臂模块。成功时输出：
 
 ```json
-{"frame_id": "base_link", "ok": true, "suction_point_m": [0.41, -0.07, 0.82]}
+{"book_count": 1, "books": [{"bbox_xywh": [10, 20, 30, 40], "confidence": 0.9, "suction_point_m": [0.41, -0.07, 0.82]}], "frame_id": "base_link", "ok": true}
 ```
+
+结果按置信度从高到低排列，只保留置信度不低于 `0.25` 且三维几何有效的书本，最多返回 5 本；不足 5 本时返回实际数量。
 
 运行前还需要满足：
 
