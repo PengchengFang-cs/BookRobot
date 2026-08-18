@@ -10,9 +10,11 @@ ros2 param set /controller_manager "$NAME.type" \
 ros2 param set /controller_manager "$NAME.params_file" \
   "$DIR/movebase_mode.yaml" >/dev/null
 
-if ! ros2 control list_controllers | grep -q "$NAME"; then
+controllers=$(ros2 control list_controllers)
+controller_line=$(grep "$NAME" <<<"$controllers" || true)
+if [[ -z "$controller_line" ]]; then
   ros2 control load_controller "$NAME" --set-state active >/dev/null
-elif ros2 control list_controllers | grep "$NAME" | grep -q inactive; then
+elif [[ "$controller_line" == *inactive* ]]; then
   ros2 control set_controller_state "$NAME" active >/dev/null
 fi
 
