@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 NAVNAV_ROOT = Path("/home/unix_ai/navnav_final")
 NAVNAV_MODULE = "runtime.wanda_nav_whrc"
+TORSO_MIN_M = 0.0
+TORSO_MAX_M = 0.28
 
 
 def load_navnav_runtime(root=NAVNAV_ROOT):
@@ -45,10 +47,23 @@ class BookAlignmentNavigator:
         adapter = self.runtime.WandaRos2Adapter()
         try:
             adapter.preflight()
+            torso = adapter.current_torso_position()
+            requested_torso = torso + float(observed[2]) - float(reference[2])
+            torso_target = min(TORSO_MAX_M, max(TORSO_MIN_M, requested_torso))
+            planned_observed = (
+                float(observed[0]),
+                float(observed[1]),
+                float(reference[2]) + torso_target - torso,
+            )
+            if torso_target != requested_torso:
+                print(
+                    f"[机器人] 高度目标 {requested_torso:.3f} m 超出升降范围，"
+                    f"本轮使用 {torso_target:.3f} m"
+                )
             commands = self.runtime.build_base_alignment_commands(
                 self.runtime.BasePoint3D(*reference),
-                self.runtime.BasePoint3D(*observed),
-                adapter.current_torso_position(),
+                self.runtime.BasePoint3D(*planned_observed),
+                torso,
             )
             for command in commands:
                 adapter.execute_command(command, precision_mode=True)

@@ -17,7 +17,7 @@ class _Adapter:
         self.preflight_calls += 1
 
     def current_torso_position(self):
-        return 0.20
+        return self.runtime.torso
 
     def execute_command(self, command, *, precision_mode):
         self.executed.append((command, precision_mode))
@@ -27,8 +27,9 @@ class _Adapter:
 
 
 class _Runtime:
-    def __init__(self, commands):
+    def __init__(self, commands, torso=0.20):
         self.commands = commands
+        self.torso = torso
         self.builder_calls = []
         self.adapter = None
 
@@ -115,6 +116,19 @@ class BookNavigationTests(unittest.TestCase):
             self.assertTrue(runtime.adapter.stopped)
         finally:
             _Adapter.execute_command = original_execute
+
+    def test_clamps_height_to_the_robot_real_upper_limit(self):
+        runtime = _Runtime([], torso=0.28)
+        navigator = BookAlignmentNavigator(runtime=runtime)
+
+        navigator.align(
+            reference=(0.91, -0.31, 0.75),
+            observed=(1.01, -0.33, 0.76),
+        )
+
+        call = runtime.builder_calls[0]
+        self.assertEqual(call.observed, (1.01, -0.33, 0.75))
+        self.assertEqual(call.torso, 0.28)
 
 
 if __name__ == "__main__":
