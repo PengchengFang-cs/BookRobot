@@ -130,19 +130,27 @@ class SensorSynchronizer:
         self.infos = deque(maxlen=frame_buffer_size)
         self.joints = defaultdict(lambda: deque(maxlen=joint_buffer_size))
 
-    def _add_message(self, target, message, arrived_at_s):
+    def _add_message(
+        self,
+        target,
+        message,
+        arrived_at_s,
+        received_at_ns=None,
+    ):
         stamp_ns = message_stamp_ns(message)
+        if stamp_ns <= 0 and received_at_ns is not None:
+            stamp_ns = int(received_at_ns)
         if stamp_ns > 0:
             target.append(TimedMessage(stamp_ns, float(arrived_at_s), message))
 
-    def add_color(self, message, *, arrived_at_s):
-        self._add_message(self.colors, message, arrived_at_s)
+    def add_color(self, message, *, arrived_at_s, received_at_ns=None):
+        self._add_message(self.colors, message, arrived_at_s, received_at_ns)
 
-    def add_depth(self, message, *, arrived_at_s):
-        self._add_message(self.depths, message, arrived_at_s)
+    def add_depth(self, message, *, arrived_at_s, received_at_ns=None):
+        self._add_message(self.depths, message, arrived_at_s, received_at_ns)
 
-    def add_info(self, message, *, arrived_at_s):
-        self._add_message(self.infos, message, arrived_at_s)
+    def add_info(self, message, *, arrived_at_s, received_at_ns=None):
+        self._add_message(self.infos, message, arrived_at_s, received_at_ns)
 
     def add_joints(self, message):
         stamp_ns = message_stamp_ns(message)

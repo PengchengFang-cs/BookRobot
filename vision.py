@@ -74,16 +74,28 @@ class Vision:
     def _color(self, message):
         self.color = message
         self.color_time = time.monotonic()
-        self.sensor_sync.add_color(message, arrived_at_s=self.color_time)
+        self.sensor_sync.add_color(
+            message,
+            arrived_at_s=self.color_time,
+            received_at_ns=self.node.get_clock().now().nanoseconds,
+        )
 
     def _depth(self, message):
         self.depth = message
         self.depth_time = time.monotonic()
-        self.sensor_sync.add_depth(message, arrived_at_s=self.depth_time)
+        self.sensor_sync.add_depth(
+            message,
+            arrived_at_s=self.depth_time,
+            received_at_ns=self.node.get_clock().now().nanoseconds,
+        )
 
     def _info(self, message):
         self.info = message
-        self.sensor_sync.add_info(message, arrived_at_s=time.monotonic())
+        self.sensor_sync.add_info(
+            message,
+            arrived_at_s=time.monotonic(),
+            received_at_ns=self.node.get_clock().now().nanoseconds,
+        )
 
     def _joints(self, message):
         self.sensor_sync.add_joints(message)

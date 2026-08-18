@@ -25,6 +25,38 @@ def message(stamp_ns, *, frame="head_rgbd_color_optical_frame", width=1920, heig
 
 
 class SensorSyncTests(unittest.TestCase):
+    def test_zero_camera_stamp_uses_ros_receive_time(self):
+        sync = SensorSynchronizer(maximum_rgbd_skew_ns=5_000_000)
+        received_ns = 7_000_000_000
+        sync.add_color(
+            message(0),
+            arrived_at_s=50.0,
+            received_at_ns=received_ns,
+        )
+        sync.add_depth(
+            message(0),
+            arrived_at_s=50.001,
+            received_at_ns=received_ns + 1_000_000,
+        )
+        sync.add_info(
+            message(0),
+            arrived_at_s=50.002,
+            received_at_ns=received_ns + 2_000_000,
+        )
+        joints = message(received_ns + 1_000_000)
+        joints.name = ["body_joint", "joint_head0", "joint_head1"]
+        joints.position = [0.2, 0.0, -0.3]
+        sync.add_joints(joints)
+
+        selected = sync.select(
+            arrived_after_s=49.0,
+            captured_after_ns=0,
+            required_joints=("body_joint", "joint_head0", "joint_head1"),
+        )
+
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected[0].captured_at_ns, received_ns)
+
     def test_default_joint_history_covers_delayed_camera_delivery(self):
         synchronizer = SensorSynchronizer()
 
