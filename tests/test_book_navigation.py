@@ -17,6 +17,8 @@ class _Adapter:
         self.preflight_calls += 1
 
     def current_torso_position(self):
+        if self.runtime.torso_readings:
+            return self.runtime.torso_readings.pop(0)
         return self.runtime.torso
 
     def execute_command(self, command, *, precision_mode):
@@ -27,16 +29,18 @@ class _Adapter:
 
 
 class _Runtime:
-    def __init__(self, commands, torso=0.20):
+    def __init__(self, commands, torso=0.20, torso_readings=()):
         self.commands = commands
         self.torso = torso
+        self.torso_readings = list(torso_readings)
         self.builder_calls = []
         self.adapter = None
 
     def BasePoint3D(self, x, y, z):
         return (x, y, z)
 
-    def WandaRos2Adapter(self):
+    def WandaRos2Adapter(self, **kwargs):
+        self.adapter_kwargs = kwargs
         self.adapter = _Adapter(self)
         return self.adapter
 
@@ -81,15 +85,19 @@ class BookNavigationTests(unittest.TestCase):
         self.assertEqual(runtime.build_base_alignment_commands, "builder")
 
     def test_executes_navnav_alignment_plan_in_order(self):
-        runtime = _Runtime(["y", "z", "x"])
+        runtime = _Runtime(["y", "z", "x"], torso_readings=(0.20, 0.21))
         navigator = BookAlignmentNavigator(runtime=runtime)
 
-        count = navigator.align(
+        result = navigator.align(
             reference=(0.91, -0.31, 0.75),
             observed=(1.01, -0.33, 0.76),
         )
 
-        self.assertEqual(count, 3)
+        self.assertEqual(result.command_count, 3)
+        self.assertEqual(runtime.adapter_kwargs, {"torso_tolerance_m": 0.003})
+        self.assertAlmostEqual(result.target_torso_m, 0.21)
+        self.assertAlmostEqual(result.actual_torso_m, 0.21)
+        self.assertAlmostEqual(result.effective_z_residual_m, 0.0)
         self.assertEqual(runtime.adapter.preflight_calls, 1)
         call = runtime.builder_calls[0]
         self.assertEqual(call.reference, (0.91, -0.31, 0.75))
@@ -117,18 +125,68 @@ class BookNavigationTests(unittest.TestCase):
         finally:
             _Adapter.execute_command = original_execute
 
-    def test_clamps_height_to_the_robot_real_upper_limit(self):
-        runtime = _Runtime([], torso=0.28)
+    def test_uses_replay_start_height_instead_of_current_height(self):
+        runtime = _Runtime([], torso_readings=(0.28, 0.208))
         navigator = BookAlignmentNavigator(runtime=runtime)
 
-        navigator.align(
+        result = navigator.align(
             reference=(0.91, -0.31, 0.75),
-            observed=(1.01, -0.33, 0.76),
+            observed=(1.01, -0.33, 0.758),
         )
 
         call = runtime.builder_calls[0]
-        self.assertEqual(call.observed, (1.01, -0.33, 0.75))
+        self.assertAlmostEqual(call.observed[2], 0.678)
         self.assertEqual(call.torso, 0.28)
+        self.assertAlmostEqual(result.target_torso_m, 0.208)
+        self.assertAlmostEqual(result.effective_z_residual_m, 0.0)
+
+    def test_negative_book_z_delta_is_applied_to_replay_height(self):
+        runtime = _Runtime([], torso_readings=(0.28, 0.19))
+        navigator = BookAlignmentNavigator(runtime=runtime)
+
+        result = navigator.align(
+            reference=(0.91, -0.31, 0.75),
+            observed=(1.01, -0.33, 0.74),
+        )
+
+        self.assertAlmostEqual(result.target_torso_m, 0.19)
+        self.assertAlmostEqual(runtime.builder_calls[0].observed[2], 0.66)
+
+    def test_rejects_replay_based_target_outside_robot_travel(self):
+        runtime = _Runtime([], torso_readings=(0.28,))
+        navigator = BookAlignmentNavigator(runtime=runtime)
+
+        with self.assertRaisesRegex(RuntimeError, "升降目标.*超出"):
+            navigator.align(
+                reference=(0.91, -0.31, 0.75),
+                observed=(1.01, -0.33, 0.84),
+            )
+
+        self.assertEqual(runtime.builder_calls, [])
+        self.assertTrue(runtime.adapter.stopped)
+
+    def test_accepts_effective_z_residual_within_three_millimetres(self):
+        runtime = _Runtime([], torso_readings=(0.28, 0.2109))
+        navigator = BookAlignmentNavigator(runtime=runtime)
+
+        result = navigator.align(
+            reference=(0.91, -0.31, 0.75),
+            observed=(1.01, -0.33, 0.758),
+        )
+
+        self.assertAlmostEqual(result.effective_z_residual_m, -0.0029)
+
+    def test_rejects_effective_z_residual_over_three_millimetres(self):
+        runtime = _Runtime([], torso_readings=(0.28, 0.212))
+        navigator = BookAlignmentNavigator(runtime=runtime)
+
+        with self.assertRaisesRegex(RuntimeError, "有效 Z 残差"):
+            navigator.align(
+                reference=(0.91, -0.31, 0.75),
+                observed=(1.01, -0.33, 0.758),
+            )
+
+        self.assertTrue(runtime.adapter.stopped)
 
 
 if __name__ == "__main__":

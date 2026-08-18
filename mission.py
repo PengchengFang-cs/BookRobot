@@ -11,6 +11,7 @@ class BookAlignmentRun:
     initial: object
     final: object
     command_count: int
+    height_alignment: object
 
 
 def _format_residual(label, target):
@@ -29,15 +30,28 @@ def run_book_alignment_once(vision, navigator, say=print):
         f"z={initial.observed_m[2]:.3f}"
     )
     say(_format_residual("初始偏差", initial))
-    command_count = navigator.align(
+    height_alignment = navigator.align(
         reference=initial.reference_m,
         observed=initial.observed_m,
     )
-    say(f"导航对位动作完成，共执行 {command_count} 条 Y/Z/X 命令")
+    say(
+        f"导航对位动作完成，共执行 {height_alignment.command_count} 条 Y/Z/X 命令"
+    )
+    say(
+        "高度补偿: "
+        f"目标升降={height_alignment.target_torso_m:.3f} m, "
+        f"实际升降={height_alignment.actual_torso_m:.3f} m, "
+        f"有效Z残差={height_alignment.effective_z_residual_m:.3f} m"
+    )
 
     final = select_alignment_book(vision.find("book", frame="base_link"))
     say(_format_residual("最终偏差", final))
-    return BookAlignmentRun(initial, final, command_count)
+    return BookAlignmentRun(
+        initial,
+        final,
+        height_alignment.command_count,
+        height_alignment,
+    )
 
 
 def run_one_fruit(fruit, vision, navigation, arm, say=print):

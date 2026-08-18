@@ -17,7 +17,7 @@
 - **标题**：重启后底盘不响应
 - **首次发现**：2026-08-18（Asia/Shanghai）
 - **最近更新**：2026-08-18（Asia/Shanghai）
-- **状态**：已绕过
+- **状态**：软件已修复，待真机验证
 - **现象与影响**：机器人重启后，网络、ROS 和 controller 健康，但底盘不响应移动控制；当时无法用底盘继续真机测试。
 - **复现/上下文**：发生在机器人重启后的释放流程中。项目路径 `/home/unix_ai/fpc/release_base.sh` 通过 `fruit_movebase_mode_controller` 的 `movebase_mode_command/mode_command` 依次发送 `5` 和 `0`。
 - **确认事实与证据**：
@@ -136,7 +136,25 @@
   - 所需高度增量约 8 mm，旧导航生成约 `0.288 m` 目标，但真机在超时前没有越过 `0.280 m`。
   - FPC 对位入口把升降目标裁到 `0.280 m` 后跳过不可执行的高度命令，横向和前后对位成功完成。
   - 移动后高度残差仍约 `+0.009 m`，与未执行上升一致。
-- **根因或假设**：已确认旧导航允许的上界与本次真机可达反馈不一致；`0.280 m` 是否为硬件、控制器配置或当时状态的永久上限尚无权威文档，因此更深原因仍未确认。
-- **处理**：当前 FPC 书本对位将目标裁到 `0.280 m` 并继续 X/Y 导航，同时保留最终 Z 残差。没有修改只读参考工程 `navnav_final`。
-- **验证**：处理后完整对位成功退出，最终平面残差为 `dx=-0.011 m, dy=-0.026 m`，高度残差为 `dz=+0.009 m`。
-- **剩余工作/链接**：在接入固定 DataReplay 抓取动作前，确认升降柱权威行程和抓取姿态对约 9 mm 高度残差的处理方式。当前状态见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md#当前问题)。
+- **根因或假设**：已确认直接原因是高度基准错误。旧公式 `current_torso + observed_z - reference_z` 隐含当前升降柱已位于录制起点；实际当前值为 `0.280 m`，而 `S1_TABLE_PICK_BOOK` 第 0 帧约为 `0.200 m`。`0.280 m` 是否也是控制器永久硬上限仍无权威文档，但它不再影响本次目标计算。
+- **处理**：FPC 改用 `0.200 m + observed_z - reference_z` 计算绝对目标；目标超出已确认 `[0.0, 0.28] m` 行程时失败，不再裁剪。执行后以 `book_z_delta - (actual_torso - 0.200 m)` 计算有效 Z 残差，并要求绝对值不超过 `3 mm`。没有修改只读参考工程 `navnav_final`。
+- **验证**：自动化测试覆盖从 `0.280 m` 起步且书本高 `8 mm` 时生成 `0.208 m` 目标、正负偏差、越界拒绝和 `3 mm` 反馈判定；完整本地 56 项测试通过。尚未执行修复后的真机升降。
+- **剩余工作/链接**：部署后执行一次真实对位，保存目标高度、实际 `body_joint` 和有效 Z 残差。当前状态见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md#当前问题)。
+
+## BOT-20260818-08
+
+- **标题**：右 D01 吸盘 Modbus 请求无回包
+- **首次发现**：2026-08-18（Asia/Shanghai）
+- **最近更新**：2026-08-18（Asia/Shanghai）
+- **状态**：等待现场处理
+- **现象与影响**：`dual-d01-control` 服务在线，但右侧报告 `available=false`、`communication_ok=false`、`healthy=false` 和 `attachment_state=communication_lost`，因此当前不能测试吸附。
+- **复现/上下文**：服务使用右侧 FTDI `AR8J81NT` 对应的 `/dev/ttyUSB1`；错误为 `ModbusTimeoutError: serial timeout after 0 of 3 expected bytes`。
+- **确认事实与证据**：
+  - FTDI 正常枚举，设备权限正常，服务独占串口且文件描述符指向正确设备。
+  - 服务能写出请求，但地址 `1/9` 及全部六个受支持波特率组合均收到 0 字节。
+  - 未占用的另一侧 FTDI 也没有 D01 回包；一次干净服务重启没有改变结果。
+  - 排查完成后 `dual-d01-control.service` 已恢复 active/running；未发送吸附 start、控制寄存器写入或机器人运动命令。
+- **根因或假设**：软件侧证据把故障边界缩小到 FTDI 转换器下游。D01 主电源未上电、RS485 A/B/地线或插头断开均与现象一致；远程软件检查不能在这些物理原因之间唯一判定。
+- **处理**：等待现场确认 D01 主电源和指示灯，并检查右侧 FTDI 到吸盘的 RS485 A/B、地线和插头。
+- **验证**：现场恢复后服务应自动重连；用只读 `client.py status --side right` 确认 `available=true`、`communication_ok=true` 和 `healthy=true` 后，才进入独立吸附/释放测试。
+- **剩余工作/链接**：现场物理链路恢复；当前状态见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md#当前问题)。

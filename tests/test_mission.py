@@ -49,7 +49,13 @@ class _AlignmentNavigator:
 
     def align(self, *, reference, observed):
         self.calls.append((reference, observed))
-        return 3
+        return SimpleNamespace(
+            command_count=3,
+            replay_torso_m=0.20,
+            target_torso_m=0.208,
+            actual_torso_m=0.207,
+            effective_z_residual_m=0.001,
+        )
 
 
 class MissionMultiBookTests(unittest.TestCase):
@@ -101,12 +107,16 @@ class BookAlignmentMissionTests(unittest.TestCase):
         self.assertIs(result.initial.book, initial_near)
         self.assertIs(result.final.book, final_near)
         self.assertEqual(result.command_count, 3)
+        self.assertAlmostEqual(result.height_alignment.target_torso_m, 0.208)
         self.assertEqual(
             navigator.calls,
             [(result.initial.reference_m, result.initial.observed_m)],
         )
         self.assertTrue(any("初始偏差" in message for message in messages))
         self.assertTrue(any("最终偏差" in message for message in messages))
+        self.assertTrue(any("目标升降=0.208 m" in message for message in messages))
+        self.assertTrue(any("实际升降=0.207 m" in message for message in messages))
+        self.assertTrue(any("有效Z残差=0.001 m" in message for message in messages))
 
     def test_rejects_empty_initial_detection(self):
         vision = _Vision([[]])

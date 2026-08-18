@@ -1,6 +1,8 @@
 """Thin adapter around the robot's deployed navnav_final alignment commands."""
 
+from dataclasses import dataclass
 import importlib
+import math
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -10,6 +12,17 @@ NAVNAV_ROOT = Path("/home/unix_ai/navnav_final")
 NAVNAV_MODULE = "runtime.wanda_nav_whrc"
 TORSO_MIN_M = 0.0
 TORSO_MAX_M = 0.28
+STAGE1_REPLAY_TORSO_M = 0.20
+EFFECTIVE_Z_TOLERANCE_M = 0.003
+
+
+@dataclass(frozen=True)
+class BookAlignmentExecution:
+    command_count: int
+    replay_torso_m: float
+    target_torso_m: float
+    actual_torso_m: float
+    effective_z_residual_m: float
 
 
 def load_navnav_runtime(root=NAVNAV_ROOT):
@@ -44,22 +57,26 @@ class BookAlignmentNavigator:
     def align(self, *, reference, observed):
         if self.runtime is None:
             self.runtime = load_navnav_runtime()
-        adapter = self.runtime.WandaRos2Adapter()
+        adapter = self.runtime.WandaRos2Adapter(
+            torso_tolerance_m=EFFECTIVE_Z_TOLERANCE_M
+        )
         try:
             adapter.preflight()
             torso = adapter.current_torso_position()
-            requested_torso = torso + float(observed[2]) - float(reference[2])
-            torso_target = min(TORSO_MAX_M, max(TORSO_MIN_M, requested_torso))
+            book_z_delta = float(observed[2]) - float(reference[2])
+            torso_target = STAGE1_REPLAY_TORSO_M + book_z_delta
+            if not math.isfinite(torso_target) or not (
+                TORSO_MIN_M <= torso_target <= TORSO_MAX_M
+            ):
+                raise RuntimeError(
+                    f"DataReplay 升降目标 {torso_target:.3f} m 超出机器人行程 "
+                    f"[{TORSO_MIN_M:.3f}, {TORSO_MAX_M:.3f}] m"
+                )
             planned_observed = (
                 float(observed[0]),
                 float(observed[1]),
-                float(reference[2]) + torso_target - torso,
+                float(reference[2]) + torso_target - float(torso),
             )
-            if torso_target != requested_torso:
-                print(
-                    f"[机器人] 高度目标 {requested_torso:.3f} m 超出升降范围，"
-                    f"本轮使用 {torso_target:.3f} m"
-                )
             commands = self.runtime.build_base_alignment_commands(
                 self.runtime.BasePoint3D(*reference),
                 self.runtime.BasePoint3D(*planned_observed),
@@ -67,6 +84,21 @@ class BookAlignmentNavigator:
             )
             for command in commands:
                 adapter.execute_command(command, precision_mode=True)
-            return len(commands)
+            actual_torso = float(adapter.current_torso_position())
+            effective_z_residual = book_z_delta - (
+                actual_torso - STAGE1_REPLAY_TORSO_M
+            )
+            if abs(effective_z_residual) > EFFECTIVE_Z_TOLERANCE_M:
+                raise RuntimeError(
+                    f"高度对位后的有效 Z 残差 {effective_z_residual:.4f} m "
+                    f"超过 {EFFECTIVE_Z_TOLERANCE_M:.4f} m"
+                )
+            return BookAlignmentExecution(
+                command_count=len(commands),
+                replay_torso_m=STAGE1_REPLAY_TORSO_M,
+                target_torso_m=torso_target,
+                actual_torso_m=actual_torso,
+                effective_z_residual_m=effective_z_residual,
+            )
         finally:
             adapter.stop()
