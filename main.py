@@ -58,28 +58,35 @@ def run_real(args):
     import rclpy
     from rclpy.node import Node
 
-    from navigation import Navigation
     from vision import Vision
-    from voice import Voice
 
     rclpy.init()
     node = Node("fruit_test")
-    navigation = Navigation(node)
-    vision = Vision(node, navigation.tf_buffer)
-    voice = Voice(node)
     arm = None
 
     try:
         if args.book_align:
             from book_navigation import BookAlignmentNavigator
+            from tf2_ros import Buffer, TransformListener
+
+            tf_buffer = Buffer()
+            tf_listener = TransformListener(tf_buffer, node)
+            vision = Vision(node, tf_buffer)
 
             run_book_alignment_once(
                 vision,
                 BookAlignmentNavigator(),
-                voice.say,
+                lambda text: print(f"[机器人] {text}"),
             )
             print(f"[视觉] 调试图: {vision.debug_path}")
             return
+
+        from navigation import Navigation
+        from voice import Voice
+
+        navigation = Navigation(node)
+        vision = Vision(node, navigation.tf_buffer)
+        voice = Voice(node)
 
         from arm import Arm
 

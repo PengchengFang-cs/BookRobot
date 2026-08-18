@@ -12,6 +12,16 @@ class MainArgumentTests(unittest.TestCase):
 
         self.assertTrue(args.book_align)
 
+    def test_book_alignment_branch_precedes_legacy_navigation_setup(self):
+        from pathlib import Path
+
+        text = (Path(__file__).resolve().parents[1] / "main.py").read_text(
+            encoding="utf-8"
+        )
+        branch = text.index("if args.book_align:")
+        legacy = text.index("from navigation import Navigation", branch)
+        self.assertLess(branch, legacy)
+
 
 if __name__ == "__main__":
     unittest.main()
