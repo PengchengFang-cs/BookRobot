@@ -3,14 +3,18 @@
 from dataclasses import dataclass
 import math
 
+from book_geometry import contact_point_for_insets
 from config import APPROACH_DISTANCE_M
 
 
-STAGE1_PICK_REFERENCE_BASE_M = (
-    APPROACH_DISTANCE_M,
+COARSE_APPROACH_REFERENCE_X_M = APPROACH_DISTANCE_M
+COARSE_APPROACH_REFERENCE_BASE_M = (
+    COARSE_APPROACH_REFERENCE_X_M,
     -0.31509978336130007,
     0.7552452105314827,
 )
+# Temporary compatibility name for the one-stage mission while it is migrated.
+STAGE1_PICK_REFERENCE_BASE_M = COARSE_APPROACH_REFERENCE_BASE_M
 STAGE1_MAX_Z_OFFSET_M = 0.03
 
 
@@ -33,12 +37,12 @@ def _point3(value):
     return point
 
 
-def select_alignment_book(books):
-    """Return the book whose suction point is nearest the replay reference."""
+def select_coarse_book(books):
+    """Choose a book for the approximate 0.48 m working-range approach."""
 
     if not books:
         raise RuntimeError("没有检测到可对位的书本")
-    reference = STAGE1_PICK_REFERENCE_BASE_M
+    reference = COARSE_APPROACH_REFERENCE_BASE_M
     candidates = []
     for book in books:
         point = _point3(book.suction_point)
@@ -46,10 +50,70 @@ def select_alignment_book(books):
         distance_squared = residual[0] * residual[0] + residual[1] * residual[1]
         candidates.append((distance_squared, book, point, residual))
     _, book, point, residual = min(candidates, key=lambda row: row[0])
+    return BookAlignmentTarget(book, reference, point, residual, residual[2])
+
+
+def build_replay_alignment_target(*, book, replay_reference):
+    """Build the precise target from one asset's recorded contact geometry."""
+
+    observed = contact_point_for_insets(
+        book.geometry,
+        long_inset_m=replay_reference.long_inset_m,
+        right_inset_m=replay_reference.right_inset_m,
+    )
+    reference = _point3(replay_reference.reference_contact_base_m)
+    residual = tuple(observed[index] - reference[index] for index in range(3))
     z_offset_m = residual[2]
     if abs(z_offset_m) > STAGE1_MAX_Z_OFFSET_M:
         raise RuntimeError(
             f"选中书本的 Z 偏移 {z_offset_m:.4f} m 超过 "
             f"{STAGE1_MAX_Z_OFFSET_M:.3f} m"
         )
-    return BookAlignmentTarget(book, reference, point, residual, z_offset_m)
+    return BookAlignmentTarget(book, reference, observed, residual, z_offset_m)
+
+
+def predict_book_after_base_motion(
+    point,
+    *,
+    odom_dx_m,
+    odom_dy_m,
+    imu_dyaw_rad,
+):
+    """Express a pre-motion base point in the post-motion base frame."""
+
+    x, y, z = _point3(point)
+    translated_x = x - float(odom_dx_m)
+    translated_y = y - float(odom_dy_m)
+    angle = -float(imu_dyaw_rad)
+    cosine = math.cos(angle)
+    sine = math.sin(angle)
+    return (
+        cosine * translated_x - sine * translated_y,
+        sine * translated_x + cosine * translated_y,
+        z,
+    )
+
+
+def reassociate_book(books, *, predicted_point_m, replay_reference):
+    """Find the current observation nearest the odom-predicted same book."""
+
+    if not books:
+        raise RuntimeError("没有检测到可重关联的书本")
+    predicted = _point3(predicted_point_m)
+    candidates = []
+    for book in books:
+        point = contact_point_for_insets(
+            book.geometry,
+            long_inset_m=replay_reference.long_inset_m,
+            right_inset_m=replay_reference.right_inset_m,
+        )
+        dx = point[0] - predicted[0]
+        dy = point[1] - predicted[1]
+        candidates.append((dx * dx + dy * dy, book))
+    return min(candidates, key=lambda row: row[0])[1]
+
+
+def select_alignment_book(books):
+    """Compatibility wrapper for the former one-stage mission."""
+
+    return select_coarse_book(books)

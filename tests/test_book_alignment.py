@@ -2,80 +2,138 @@ import math
 import unittest
 from types import SimpleNamespace
 
+import numpy as np
+
 from book_alignment import (
-    STAGE1_PICK_REFERENCE_BASE_M,
-    select_alignment_book,
+    COARSE_APPROACH_REFERENCE_X_M,
+    build_replay_alignment_target,
+    predict_book_after_base_motion,
+    reassociate_book,
+    select_coarse_book,
 )
+from book_geometry import BookGeometry, contact_point_for_insets
 from config import APPROACH_DISTANCE_M
+from replay_pick_reference import ReplayPickReference
+
+
+def _geometry(*, suction_point, long_axis=(1.0, 0.0, 0.0)):
+    short_axis = (-long_axis[1], long_axis[0], 0.0)
+    return BookGeometry(
+        suction_point=suction_point,
+        long_axis=long_axis,
+        short_axis_right_to_left=short_axis,
+        long_extent_m=0.30,
+        short_extent_m=0.20,
+        confidence=0.9,
+        long_inset_m=0.13,
+        right_inset_m=0.10,
+    )
+
+
+def _book(point):
+    geometry = _geometry(suction_point=point)
+    return SimpleNamespace(suction_point=point, geometry=geometry)
+
+
+def _reference(**changes):
+    values = dict(
+        asset_id="S1_TABLE_PICK_BOOK",
+        contact_frame_index=300,
+        early_frame_indices=(0, 10, 20, 40, 80),
+        suction_center_px=(164.17, 196.70),
+        reference_contact_base_m=(0.715, -0.391, 0.713),
+        long_inset_m=0.08,
+        right_inset_m=0.05,
+        sample_count=5,
+        axis_spread_m=(0.001, 0.001, 0.002),
+    )
+    values.update(changes)
+    return ReplayPickReference(**values)
 
 
 class BookAlignmentTests(unittest.TestCase):
-    def test_stage1_reference_uses_the_existing_fruittest_standoff(self):
-        self.assertEqual(STAGE1_PICK_REFERENCE_BASE_M[0], APPROACH_DISTANCE_M)
-        self.assertAlmostEqual(STAGE1_PICK_REFERENCE_BASE_M[1], -0.31509978336130007)
+    def test_coarse_reference_uses_fruittest_working_distance_only(self):
+        self.assertEqual(COARSE_APPROACH_REFERENCE_X_M, APPROACH_DISTANCE_M)
+        near = _book((0.60, -0.32, 0.76))
+        far = _book((0.80, 0.20, 0.76))
 
-    def test_selects_book_nearest_pick_alignment_point(self):
-        near = SimpleNamespace(suction_point=(1.01, -0.33, 0.76))
-        far = SimpleNamespace(suction_point=(1.08, 0.31, 0.77))
-
-        selected = select_alignment_book([far, near])
+        selected = select_coarse_book([far, near])
 
         self.assertIs(selected.book, near)
-        self.assertEqual(selected.reference_m, STAGE1_PICK_REFERENCE_BASE_M)
-        self.assertEqual(selected.observed_m, near.suction_point)
-        for actual, observed, reference in zip(
-            selected.residual_m,
-            near.suction_point,
-            STAGE1_PICK_REFERENCE_BASE_M,
-        ):
-            self.assertAlmostEqual(actual, observed - reference)
+        self.assertEqual(selected.reference_m[0], APPROACH_DISTANCE_M)
+
+    def test_precise_target_uses_replay_contact_not_point_four_eight(self):
+        reference = _reference()
+        book = _book((0.80, -0.30, 0.72))
+
+        target = build_replay_alignment_target(
+            book=book,
+            replay_reference=reference,
+        )
+
+        expected_observed = contact_point_for_insets(
+            book.geometry,
+            long_inset_m=reference.long_inset_m,
+            right_inset_m=reference.right_inset_m,
+        )
+        self.assertEqual(target.reference_m, reference.reference_contact_base_m)
+        self.assertNotEqual(target.reference_m[0], APPROACH_DISTANCE_M)
+        self.assertEqual(target.observed_m, expected_observed)
+        np.testing.assert_allclose(
+            target.residual_m,
+            np.asarray(expected_observed) - np.asarray(reference.reference_contact_base_m),
+        )
         self.assertAlmostEqual(
-            selected.z_offset_m,
-            near.suction_point[2] - STAGE1_PICK_REFERENCE_BASE_M[2],
+            target.z_offset_m,
+            expected_observed[2] - reference.reference_contact_base_m[2],
         )
 
-    def test_selection_uses_xy_distance_and_ignores_z_distance(self):
-        reference = STAGE1_PICK_REFERENCE_BASE_M
-        xy_near = SimpleNamespace(
-            suction_point=(reference[0] + 0.001, reference[1], reference[2] + 0.02)
-        )
-        xyz_near = SimpleNamespace(
-            suction_point=(reference[0] + 0.015, reference[1], reference[2])
-        )
-
-        selected = select_alignment_book([xyz_near, xy_near])
-
-        self.assertIs(selected.book, xy_near)
-        self.assertAlmostEqual(selected.z_offset_m, 0.02)
-
-    def test_preserves_zero_and_negative_z_offsets(self):
-        reference = STAGE1_PICK_REFERENCE_BASE_M
-        zero = SimpleNamespace(suction_point=reference)
-        negative = SimpleNamespace(
-            suction_point=(reference[0] + 0.01, reference[1], reference[2] - 0.01)
+    def test_predicts_same_book_in_new_base_with_inverse_se2_motion(self):
+        predicted = predict_book_after_base_motion(
+            (1.0, 0.2, 0.75),
+            odom_dx_m=0.20,
+            odom_dy_m=-0.10,
+            imu_dyaw_rad=math.pi / 2.0,
         )
 
-        self.assertEqual(select_alignment_book([zero]).z_offset_m, 0.0)
-        self.assertAlmostEqual(select_alignment_book([negative]).z_offset_m, -0.01)
+        np.testing.assert_allclose(predicted, (0.30, -0.80, 0.75), atol=1e-12)
 
-    def test_rejects_selected_z_offset_outside_thirty_millimetres(self):
-        reference = STAGE1_PICK_REFERENCE_BASE_M
-        book = SimpleNamespace(
-            suction_point=(reference[0], reference[1], reference[2] + 0.031)
+    def test_reassociates_nearest_predicted_book_not_nearest_replay_reference(self):
+        reference = _reference(
+            reference_contact_base_m=(0.70, -0.39, 0.72),
+            long_inset_m=0.13,
+            right_inset_m=0.10,
         )
+        same_book = _book((0.91, -0.10, 0.72))
+        distractor = _book((0.70, -0.39, 0.72))
+
+        selected = reassociate_book(
+            [distractor, same_book],
+            predicted_point_m=(0.90, -0.11, 0.72),
+            replay_reference=reference,
+        )
+
+        self.assertIs(selected, same_book)
+
+    def test_rejects_precise_z_offset_outside_thirty_millimetres(self):
+        reference = _reference(reference_contact_base_m=(0.715, -0.391, 0.70))
+        book = _book((0.80, -0.30, 0.731))
 
         with self.assertRaisesRegex(RuntimeError, "Z 偏移.*0.030"):
-            select_alignment_book([book])
+            build_replay_alignment_target(
+                book=book,
+                replay_reference=reference,
+            )
 
-    def test_rejects_empty_book_list(self):
+    def test_rejects_empty_coarse_or_reassociation_candidates(self):
         with self.assertRaisesRegex(RuntimeError, "没有检测到可对位的书本"):
-            select_alignment_book([])
-
-    def test_rejects_non_finite_suction_point(self):
-        book = SimpleNamespace(suction_point=(1.0, math.nan, 0.75))
-
-        with self.assertRaisesRegex(ValueError, "书本吸取点必须是三个有限数值"):
-            select_alignment_book([book])
+            select_coarse_book([])
+        with self.assertRaisesRegex(RuntimeError, "没有检测到可重关联的书本"):
+            reassociate_book(
+                [],
+                predicted_point_m=(0.7, -0.3, 0.7),
+                replay_reference=_reference(),
+            )
 
 
 if __name__ == "__main__":
