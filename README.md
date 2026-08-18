@@ -44,7 +44,7 @@ Stage 1 抓书不再把 `0.48 m` 当作最终抓取坐标。当前流程分成�
   -> 0.48 m 只用于进入粗略工作范围
   -> 停稳后重新拍摄并用 odom/IMU 重关联同一本书
   -> 读取 config/stage1_pick_reference.json
-  -> 按录制图像中的蓝色吸盘中心计算精确 X/Y/Z
+  -> 当前书的 13 cm / 10 cm 点减去录制吸盘固定参考
   -> X/Y 底盘对位，Z 平移整条 Pick torso 轨迹
   -> 才执行 DataReplay
 ```
@@ -61,6 +61,8 @@ python3 scripts/calibrate_replay_pick_reference.py \
 ```
 
 `./run.sh --book-align --book-align-mode vector` 执行两级底盘对位并在最终测量后退出；`./run.sh --book-pick --book-align-mode vector` 在同一结果上继续执行一次 Pick。两者都要求参考 JSON 已经生成。
+
+当前资产的固定参考是 `base_link=(0.7709968,-0.3608004,0.7538117) m`。这只是 DataReplay 吸盘落点；五本书分别使用各自实时视觉算出的 0.13/0.10 抓取点与它做差，因此一条单书录制轨迹可以逐本复用。
 
 运行前还需要满足：
 

@@ -1,0 +1,26 @@
+{
+  "asset_id": "S1_TABLE_PICK_BOOK",
+  "axis_spread_m": [
+    0.0001663226583655808,
+    0.0001905085499380732,
+    0.0
+  ],
+  "contact_frame_index": 300,
+  "early_frame_indices": [
+    0,
+    10,
+    20,
+    40,
+    80
+  ],
+  "reference_contact_base_m": [
+    0.7709967902119782,
+    -0.3608004442153626,
+    0.7538117409713647
+  ],
+  "sample_count": 5,
+  "suction_center_px": [
+    159.0,
+    180.0
+  ]
+}
