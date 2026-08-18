@@ -3,6 +3,7 @@
 import importlib
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 
 NAVNAV_ROOT = Path("/home/unix_ai/navnav_final")
@@ -18,7 +19,15 @@ def load_navnav_runtime(root=NAVNAV_ROOT):
     if inserted:
         sys.path.insert(0, root_text)
     try:
-        return importlib.import_module(NAVNAV_MODULE)
+        package = importlib.import_module(NAVNAV_MODULE)
+        adapter_module = importlib.import_module(
+            f"{NAVNAV_MODULE}.wanda_ros2_adapter"
+        )
+        return SimpleNamespace(
+            BasePoint3D=package.BasePoint3D,
+            build_base_alignment_commands=package.build_base_alignment_commands,
+            WandaRos2Adapter=adapter_module.WandaRos2Adapter,
+        )
     finally:
         if inserted:
             sys.path.remove(root_text)

@@ -1,7 +1,9 @@
 import unittest
 from types import SimpleNamespace
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
-from book_navigation import BookAlignmentNavigator
+from book_navigation import BookAlignmentNavigator, load_navnav_runtime
 
 
 class _Adapter:
@@ -45,6 +47,27 @@ class _Runtime:
 
 
 class BookNavigationTests(unittest.TestCase):
+    @patch("book_navigation.importlib.import_module")
+    def test_loader_gets_adapter_from_its_real_submodule(self, import_module):
+        package = SimpleNamespace(
+            BasePoint3D="point",
+            build_base_alignment_commands="builder",
+        )
+        adapter_class = object()
+        adapter_module = SimpleNamespace(WandaRos2Adapter=adapter_class)
+        import_module.side_effect = [package, adapter_module]
+
+        with TemporaryDirectory() as root:
+            runtime = load_navnav_runtime(root)
+
+        self.assertEqual(
+            import_module.call_args_list[1].args[0],
+            "runtime.wanda_nav_whrc.wanda_ros2_adapter",
+        )
+        self.assertIs(runtime.WandaRos2Adapter, adapter_class)
+        self.assertEqual(runtime.BasePoint3D, "point")
+        self.assertEqual(runtime.build_base_alignment_commands, "builder")
+
     def test_executes_navnav_alignment_plan_in_order(self):
         runtime = _Runtime(["y", "z", "x"])
         navigator = BookAlignmentNavigator(runtime=runtime)
