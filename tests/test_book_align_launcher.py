@@ -1,0 +1,39 @@
+from pathlib import Path
+import unittest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class BookAlignLauncherTests(unittest.TestCase):
+    def test_book_alignment_loads_vision_environment_before_moveit_setup(self):
+        run_text = (ROOT / "run.sh").read_text(encoding="utf-8")
+
+        branch = run_text.index('" --book-align "')
+        moveit_install = run_text.index("install_moveit_user.sh")
+        self.assertLess(branch, moveit_install)
+        self.assertIn('source "$DIR/scripts/book_vision_env.sh"', run_text)
+
+    def test_vision_environment_matches_running_7443_service(self):
+        text = (ROOT / "scripts" / "book_vision_env.sh").read_text(
+            encoding="utf-8"
+        )
+
+        for required in (
+            "127.0.0.1:7443",
+            "planning-server.bookbot.internal",
+            "ruan/visiond",
+            "onsite-gpu0-vision",
+            "grounding-dino-base-swinb+sam2.1-hiera-large+ppocrv6-20260814-r3",
+            "bb6af3d199e3c41051a4844ae122ebf1e0a7bd63496f33f22f78e9ee0599371f",
+            "wanda-head-rgbd-live-20260815",
+            "/home/unix_ai/.local/share/bookbot/vision-rpc/runtime/sysroot",
+            "/home/unix_ai/.local/share/bookbot/vision-rpc/certs",
+            "/home/unix_ai/.local/share/bookbot/vision-rpc/private/wanda-vision-client.key",
+        ):
+            self.assertIn(required, text)
+        self.assertNotIn("BEGIN PRIVATE KEY", text)
+
+
+if __name__ == "__main__":
+    unittest.main()

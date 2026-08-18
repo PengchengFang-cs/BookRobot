@@ -18,6 +18,12 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI=file:///home/unix_ai/config/cyclonedds.xml
 export PYTHONUNBUFFERED=1
 
+if [[ " $* " == *" --book-align "* ]]; then
+  source "$DIR/scripts/book_vision_env.sh"
+  "$DIR/release_base.sh"
+  exec python3 "$DIR/main.py" "$@"
+fi
+
 if [[ ! -x "$DIR/ros_overlay/opt/ros/humble/lib/moveit_ros_move_group/move_group" ]]; then
   "$DIR/install_moveit_user.sh"
 fi
@@ -29,10 +35,6 @@ if [[ " $* " != *" --check "* ]] && \
    [[ " $* " != *" --arm-motion-check "* ]] && \
    [[ " $* " != *" --pick-motion-check "* ]]; then
   "$DIR/release_base.sh"
-fi
-
-if [[ " $* " == *" --book-align "* ]]; then
-  exec python3 "$DIR/main.py" "$@"
 fi
 
 python3 "$DIR/prepare_moveit.py"
