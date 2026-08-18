@@ -14,7 +14,7 @@
 
 **已有证据：** 书本感知已替换 FruitTest 的 HSV 水果路径；5090 mask client、Wanda 本地 RGB-D 几何、同步帧选择、capture-bound deadline、仅感知入口、自动化测试和 review fixes 已进入 `main`。
 
-**完成证据：** 对同一次真实书本 capture 保存 mask 叠加图和感知 JSON；叠加图显示 mask 覆盖目标书本，JSON 记录 `"frame_id": "base_link"` 和吸取点，吸取点符合沿书本长轴从近端向内 `0.13 m`、沿短轴从右边缘向左 `0.10 m` 的固定偏移规则；仅感知测试入口没有创建导航或机械臂对象。
+**完成证据：** 对同一次真实书本 capture 保存 mask 调试叠加图和 perception-only JSON；叠加图显示 mask 覆盖目标书本，JSON 记录 `"frame_id": "base_link"` 和吸取点。调试叠加图或配套几何记录包含长短轴、机器人视角近端、右边缘和吸取点投影，并记录由这些量推导的 long/right inset，以分别核对 `0.13 m`/`0.10 m` 固定偏移；仅感知测试入口没有创建导航或机械臂对象。当前 perception-only JSON 报告 `ok`、`frame_id` 和 `suction_point_m`，不含所需几何字段；这些字段属于本阶段待补充的诊断输出，不作为已有能力。
 
 详细方案见[书本感知替换设计](superpowers/specs/2026-08-17-fruittest-book-perception-design.md)和[实施计划](superpowers/plans/2026-08-17-fruittest-book-perception.md)。
 
@@ -26,7 +26,7 @@
 
 **已有证据：** 底盘释放后，用户已在真机上确认前进和后退可用；待处理问题见 [`BOT-20260818-02`](ROBOT_ISSUES.md#bot-20260818-02) 与 [`BOT-20260818-03`](ROBOT_ISSUES.md#bot-20260818-03)。
 
-**完成证据：** 每次测试记录目标角、odom 起止姿态、由二者计算的实际转角、转角误差、旋转方向和用户现场观察；是否通过按真机执行前写入本阶段测试设计的容差与重复次数判断。
+**完成证据：** 每次测试记录目标角、odom 起止姿态、由二者计算的实际转角、转角误差、旋转方向、接近目标距离、odom 起止位置、实际平移距离、终点误差、最终朝向和用户现场观察；是否通过按真机执行前写入本阶段测试设计的容差与重复次数判断。
 
 ## 阶段 3：吸书动作
 

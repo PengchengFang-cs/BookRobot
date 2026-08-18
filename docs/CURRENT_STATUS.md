@@ -28,7 +28,7 @@
 ## 下一步
 
 1. 采集包含真实书本的同步 RGB-D 场景。
-2. 对同一次 capture 保存 mask 叠加图和感知 JSON：肉眼确认 mask 覆盖目标书本，确认 JSON 的 `frame_id` 为 `base_link`，并核对吸取点符合沿书本长轴从近端向内 `0.13 m`、沿短轴从右边缘向左 `0.10 m` 的固定偏移规则。
+2. 对同一次 capture 保存 mask 调试叠加图和 perception-only JSON：肉眼确认 mask 覆盖目标书本并确认 JSON 的 `frame_id` 为 `base_link`。调试叠加图或配套几何记录必须包含长短轴、机器人视角近端、右边缘和吸取点投影，并记录由这些量推导的 long/right inset，用于分别核对 `0.13 m`/`0.10 m` 固定偏移。当前 perception-only JSON 报告 `ok`、`frame_id` 和 `suction_point_m`，不含上述几何字段；这些字段是验证阶段需要补充的诊断输出，不视为当前已有能力。
 3. 只有上述视觉与几何验证通过后，才规划接入导航或吸取动作。
 
 ## 更新要求
