@@ -14,6 +14,14 @@ class BookAlignLauncherTests(unittest.TestCase):
         self.assertLess(branch, moveit_install)
         self.assertIn('source "$DIR/scripts/book_vision_env.sh"', run_text)
 
+    def test_book_alignment_does_not_wait_for_a_new_release_button_edge(self):
+        main_text = (ROOT / "main.py").read_text(encoding="utf-8")
+        branch_start = main_text.index("if args.book_align:")
+        branch_end = main_text.index("\n            return", branch_start)
+        branch = main_text[branch_start:branch_end]
+
+        self.assertNotIn("wait_for_release", branch)
+
     def test_vision_environment_matches_running_7443_service(self):
         text = (ROOT / "scripts" / "book_vision_env.sh").read_text(
             encoding="utf-8"

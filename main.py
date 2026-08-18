@@ -73,8 +73,6 @@ def run_real(args):
         if args.book_align:
             from book_navigation import BookAlignmentNavigator
 
-            voice.say("请打开遥控器并按一下机身释放键")
-            navigation.wait_for_release()
             run_book_alignment_once(
                 vision,
                 BookAlignmentNavigator(),
