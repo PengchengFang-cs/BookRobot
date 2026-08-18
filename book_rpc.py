@@ -197,7 +197,9 @@ class BookVisionClient:
         header.correlation_id = request_id
         header.sequence = self._sequence
         header.issued_at_ns = now_ns
-        header.not_before_ns = now_ns
+        # The server's capture gate requires the image timestamp to be inside
+        # [not_before_ns, server_now]. The image necessarily predates this RPC.
+        header.not_before_ns = captured_at_ns
         header.deadline_ns = now_ns + int(self.settings.timeout_s * 1_000_000_000)
         header.expected_output_frame = "image"
         header.config_hash = self.settings.config_hash

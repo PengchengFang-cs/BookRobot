@@ -81,6 +81,8 @@ class BookRpcTests(unittest.TestCase):
         self.assertEqual(request.task, "scene_table_books_segmentation")
         self.assertEqual(request.header.expected_output_frame, "image")
         self.assertEqual(request.header.calibration_version, "wanda-head-rgbd-v1")
+        self.assertEqual(request.header.not_before_ns, 123456)
+        self.assertGreaterEqual(request.header.issued_at_ns, 123456)
         self.assertEqual(request.captures[0].camera_id, "head_rgbd")
         self.assertEqual(request.captures[0].color.encoding, "bgr8")
         self.assertEqual(request.captures[0].color.payload, image.tobytes())
