@@ -31,6 +31,8 @@
 - 用户完成吸盘现场处理后，只读 D01 状态确认右侧 `available=true`、`communication_ok=true`、`healthy=true`、`attachment_state=idle`、`last_error=null`；`BOT-20260818-08` 更新为已解决。本次状态查询未启动吸附。
 - 用户指出上次 XY-only 测试肉眼未见机器人移动。由于当次仅在结束后读取 odom，原记录不能证明实际位移。机器人保持静止时追加 5 次感知：4 次有效目标的 X 跨度约 `1.5 mm`、Y 跨度约 `1.0 mm`，第 5 次明确返回 0 本；静止视觉波动远小于原前后约 48 mm 的 Y 变化。为取得直接运动证据，新增 opt-in `vector` 模式：保留 `legacy` 默认，把 dx/dy 合成为一次前进或倒车向量，并为两种模式记录 task-origin 后的 odom `dx/dy` 与 IMU yaw；60 项本地测试通过，尚未真机运动。
 - 经用户确认现场无人并持续观察后，执行一次 opt-in `vector` 真机对位。初始五本书检测后选中目标残差为 `dx=+0.009 m, dy=+0.024 m, dz=+0.012 m`；3 条 X/Y 命令产生 task-origin odom `dx=+0.014 m, dy=+0.034 m, yaw=+0.027 rad`，证明机器人确实移动。停稳后五本书再次全部检出，最终目标残差为 `dx=-0.008 m, dy=-0.045 m, dz=+0.010 m`，XY 验收失败。结束后 odom twist 全零、`body_joint=0.280 m` 且速度为零；未运行升降、机械臂、DataReplay 或吸盘。最终图保存于非 Git 的 `logs/book_alignment_vector_20260818.jpg`；结果追加到 [`BOT-20260818-09`](ROBOT_ISSUES.md#bot-20260818-09)。
+- 在用户现场观察下执行第一次完整 Pick。视觉按旧参考点对位后 torso 成功预置至约 `0.211 m`；首次回放被旧 `sudo systemctl` 阻塞，改为手工停服务后低层回放到第 300 帧并调用右 D01，但未形成真空，回放停止且未抬书。用户确认机器人实际上仍离桌过远；由此发现旧 `x=0.9116 m` 仅是录制第 0 帧视觉点，并非吸盘接触标定。D01 已停止并恢复 idle/healthy，底盘静止，机械臂留在约第 300 帧姿态。详细证据见 [`BOT-20260818-10`](ROBOT_ISSUES.md#bot-20260818-10)。
+- 抓书前后参考改用 FruitTest 已有的 `0.48 m` 固定停靠距离，左右参考和 Z offset 保持不变；旧回放改用无需 sudo 的直接 `systemctl`，失败时自动停止右 D01。本地完整 78 项测试通过，修改尚未触发下一次真机运动。
 
 ## 2026-08-17（Asia/Shanghai）
 

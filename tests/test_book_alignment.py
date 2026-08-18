@@ -6,10 +6,15 @@ from book_alignment import (
     STAGE1_PICK_REFERENCE_BASE_M,
     select_alignment_book,
 )
+from config import APPROACH_DISTANCE_M
 
 
 class BookAlignmentTests(unittest.TestCase):
-    def test_selects_book_nearest_recorded_pick_point(self):
+    def test_stage1_reference_uses_the_existing_fruittest_standoff(self):
+        self.assertEqual(STAGE1_PICK_REFERENCE_BASE_M[0], APPROACH_DISTANCE_M)
+        self.assertAlmostEqual(STAGE1_PICK_REFERENCE_BASE_M[1], -0.31509978336130007)
+
+    def test_selects_book_nearest_pick_alignment_point(self):
         near = SimpleNamespace(suction_point=(1.01, -0.33, 0.76))
         far = SimpleNamespace(suction_point=(1.08, 0.31, 0.77))
 

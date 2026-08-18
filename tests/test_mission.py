@@ -1,6 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
+from book_alignment import STAGE1_PICK_REFERENCE_BASE_M
 from mission import run_book_alignment_once, run_book_pick_once, run_one_fruit
 
 
@@ -101,9 +102,14 @@ class MissionMultiBookTests(unittest.TestCase):
 
 class BookAlignmentMissionTests(unittest.TestCase):
     def test_detects_aligns_and_measures_again(self):
-        initial_far = SimpleNamespace(suction_point=(1.08, 0.31, 0.77))
-        initial_near = SimpleNamespace(suction_point=(1.01, -0.33, 0.76))
-        final_near = SimpleNamespace(suction_point=(0.915, -0.317, 0.756))
+        reference = STAGE1_PICK_REFERENCE_BASE_M
+        initial_far = SimpleNamespace(suction_point=(0.70, 0.31, 0.77))
+        initial_near = SimpleNamespace(
+            suction_point=(0.60, -0.33, reference[2] + 0.005)
+        )
+        final_near = SimpleNamespace(
+            suction_point=(reference[0] + 0.003, reference[1] - 0.002, 0.756)
+        )
         vision = _Vision([[initial_far, initial_near], [final_near]])
         vision.frames = []
         original_find = vision.find

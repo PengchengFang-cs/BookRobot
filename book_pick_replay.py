@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import math
 from numbers import Real
 from pathlib import Path
+import subprocess
 import sys
 import time
 import uuid
@@ -76,6 +77,40 @@ def _success(result):
     return getattr(status, "value", status) == "SUCCESS"
 
 
+def _stop_service_without_sudo(name):
+    print(f"  Stopping {name} ...")
+    subprocess.run(
+        ["systemctl", "stop", name],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    time.sleep(1)
+
+
+def _start_service_without_sudo(name, timeout=20.0):
+    print(f"  Starting {name} ...")
+    subprocess.run(
+        ["systemctl", "start", name],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.monotonic() + float(timeout)
+    while time.monotonic() < deadline:
+        active = subprocess.run(
+            ["systemctl", "is-active", "--quiet", name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if active.returncode == 0:
+            time.sleep(5)
+            print(f"  {name} ready.")
+            return
+        time.sleep(1)
+    raise RuntimeError(f"{name} did not become active within {timeout:.1f} s")
+
+
 class LegacyV3PickRuntime:
     """Narrow bridge to the reviewed V3 Pick publisher and D01 schedule."""
 
@@ -101,6 +136,8 @@ class LegacyV3PickRuntime:
 
     def load_episode(self):
         module = self.replay_adapter._load_module()
+        module._stop_service = _stop_service_without_sudo
+        module._start_service_and_wait = _start_service_without_sudo
         episode = module.HDF5EpisodeLoader.load(str(self.entry["file"]))
         if int(getattr(episode, "num_frames", -1)) != PICK_FRAME_COUNT:
             raise RuntimeError(
@@ -185,6 +222,12 @@ class LegacyV3PickRuntime:
             )
         return True
 
+    def cleanup_failed_pick(self):
+        return self.replay_adapter.delegate.execute_d01_event(
+            event={"command": "right_suction_stop"},
+            context=self.context,
+        )
+
     def close(self):
         if not self._closed:
             self.replay_adapter.stop_command_stream("FPC table Pick finished")
@@ -237,11 +280,13 @@ class Stage1BookPickReplayer:
         offset = _finite_offset(z_offset_m)
         if self.runtime is None:
             self.runtime = load_legacy_v3_pick_runtime()
+        replay_started = False
         try:
             episode = self.runtime.load_episode()
             shifted = shift_pick_episode_torso(episode, offset)
             torso_target = float(shifted.actions["target_qpos_torso"][0, 0])
             torso_actual = float(self.runtime.preposition_torso(torso_target))
+            replay_started = True
             replay = self.runtime.replay_pick(shifted)
             holding = bool(self.runtime.confirm_holding())
             if not holding:
@@ -253,5 +298,12 @@ class Stage1BookPickReplayer:
                 torso_actual_m=torso_actual,
                 d01_holding=holding,
             )
+        except Exception:
+            if replay_started:
+                try:
+                    self.runtime.cleanup_failed_pick()
+                except Exception as cleanup_error:
+                    print(f"[D01] Pick 失败后的关闭命令也失败: {cleanup_error}")
+            raise
         finally:
             self.runtime.close()

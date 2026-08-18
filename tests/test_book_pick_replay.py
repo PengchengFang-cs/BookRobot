@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
@@ -75,6 +76,7 @@ class _Runtime:
         self.fail_replay = fail_replay
         self.calls = []
         self.closed = False
+        self.cleaned_up = False
         self.replayed_episode = None
 
     def load_episode(self):
@@ -95,6 +97,10 @@ class _Runtime:
     def confirm_holding(self):
         self.calls.append("holding")
         return self.holding
+
+    def cleanup_failed_pick(self):
+        self.calls.append("cleanup")
+        self.cleaned_up = True
 
     def close(self):
         self.calls.append("close")
@@ -127,6 +133,8 @@ class Stage1BookPickReplayerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "没有吸住"):
             Stage1BookPickReplayer(runtime=runtime).pick(0.0)
 
+        self.assertTrue(runtime.cleaned_up)
+        self.assertEqual(runtime.calls[-2:], ["cleanup", "close"])
         self.assertTrue(runtime.closed)
 
     def test_closes_runtime_when_replay_fails(self):
@@ -135,6 +143,8 @@ class Stage1BookPickReplayerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "replay failed"):
             Stage1BookPickReplayer(runtime=runtime).pick(0.0)
 
+        self.assertTrue(runtime.cleaned_up)
+        self.assertEqual(runtime.calls[-2:], ["cleanup", "close"])
         self.assertTrue(runtime.closed)
 
 
@@ -161,7 +171,11 @@ class _ReplayAdapter:
         self.frames_sent = 0
         self.run_calls = []
         self.closed = False
-        self.delegate = SimpleNamespace(check=self._check)
+        self.d01_events = []
+        self.delegate = SimpleNamespace(
+            check=self._check,
+            execute_d01_event=self._execute_d01_event,
+        )
 
     def _load_module(self):
         return SimpleNamespace(
@@ -196,6 +210,10 @@ class _ReplayAdapter:
     def _check(self, block, context):
         self.check_call = (block, context)
         return SimpleNamespace(status=_Status("SUCCESS"), detail="holding")
+
+    def _execute_d01_event(self, *, event, context):
+        self.d01_events.append((event, context))
+        return SimpleNamespace(status=_Status("SUCCESS"), detail="stopped")
 
     def stop_command_stream(self, _reason):
         self.closed = True
@@ -272,6 +290,27 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
         self.assertTrue(nav.adapter.stopped)
         self.assertTrue(nav.adapter.destroyed)
 
+    def test_loaded_replay_uses_direct_systemctl_without_sudo(self):
+        runtime, _replay, _nav, _episode_value = self._runtime()
+        runtime.load_episode()
+        completed = SimpleNamespace(returncode=0)
+
+        with patch("book_pick_replay.subprocess.run", return_value=completed) as run:
+            with patch("book_pick_replay.time.sleep"):
+                runtime.module._stop_service("manipulation.service")
+                runtime.module._start_service_and_wait(
+                    "manipulation.service", timeout=1.0
+                )
+
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(
+            commands[0], ["systemctl", "stop", "manipulation.service"]
+        )
+        self.assertEqual(
+            commands[1], ["systemctl", "start", "manipulation.service"]
+        )
+        self.assertNotIn("sudo", [part for command in commands for part in command])
+
     def test_rejects_pick_asset_that_is_not_exactly_607_frames(self):
         runtime, _replay, _nav, _episode_value = self._runtime(frame_count=606)
 
@@ -310,6 +349,16 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
         self.assertEqual(replay.check_call[0].step_id, "S1-B1-03")
         runtime.close()
         self.assertTrue(replay.closed)
+
+    def test_failed_pick_cleanup_stops_right_suction(self):
+        runtime, replay, _nav, _episode_value = self._runtime()
+
+        runtime.cleanup_failed_pick()
+
+        self.assertEqual(
+            replay.d01_events[0][0], {"command": "right_suction_stop"}
+        )
+        self.assertIs(replay.d01_events[0][1], runtime.context)
 
 if __name__ == "__main__":
     unittest.main()

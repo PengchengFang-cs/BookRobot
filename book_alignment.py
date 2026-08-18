@@ -3,9 +3,11 @@
 from dataclasses import dataclass
 import math
 
+from config import APPROACH_DISTANCE_M
+
 
 STAGE1_PICK_REFERENCE_BASE_M = (
-    0.9116001170551475,
+    APPROACH_DISTANCE_M,
     -0.31509978336130007,
     0.7552452105314827,
 )
