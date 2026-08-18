@@ -30,6 +30,7 @@
 - 经用户确认现场可运动后，执行第一次 XY-only 真机对位。五本书检测正常，选中目标初始残差 `dx=-0.012 m, dy=-0.025 m, dz=+0.011 m`；执行 4 条 X/Y 底盘命令后重新检测，最终残差 `dx=+0.008 m, dy=+0.023 m, dz=+0.011 m`。输出的 Pipeline 固定 Z offset 始终为 `+0.011 m`；结束后 odom twist 全零且 `body_joint=0.280 m`，本轮未运行升降、机械臂、DataReplay 或吸盘。最终图保存于非 Git 的 `logs/book_alignment_xy_only_20260818.jpg`；XY 精度问题见 [`BOT-20260818-09`](ROBOT_ISSUES.md#bot-20260818-09)。
 - 用户完成吸盘现场处理后，只读 D01 状态确认右侧 `available=true`、`communication_ok=true`、`healthy=true`、`attachment_state=idle`、`last_error=null`；`BOT-20260818-08` 更新为已解决。本次状态查询未启动吸附。
 - 用户指出上次 XY-only 测试肉眼未见机器人移动。由于当次仅在结束后读取 odom，原记录不能证明实际位移。机器人保持静止时追加 5 次感知：4 次有效目标的 X 跨度约 `1.5 mm`、Y 跨度约 `1.0 mm`，第 5 次明确返回 0 本；静止视觉波动远小于原前后约 48 mm 的 Y 变化。为取得直接运动证据，新增 opt-in `vector` 模式：保留 `legacy` 默认，把 dx/dy 合成为一次前进或倒车向量，并为两种模式记录 task-origin 后的 odom `dx/dy` 与 IMU yaw；60 项本地测试通过，尚未真机运动。
+- 经用户确认现场无人并持续观察后，执行一次 opt-in `vector` 真机对位。初始五本书检测后选中目标残差为 `dx=+0.009 m, dy=+0.024 m, dz=+0.012 m`；3 条 X/Y 命令产生 task-origin odom `dx=+0.014 m, dy=+0.034 m, yaw=+0.027 rad`，证明机器人确实移动。停稳后五本书再次全部检出，最终目标残差为 `dx=-0.008 m, dy=-0.045 m, dz=+0.010 m`，XY 验收失败。结束后 odom twist 全零、`body_joint=0.280 m` 且速度为零；未运行升降、机械臂、DataReplay 或吸盘。最终图保存于非 Git 的 `logs/book_alignment_vector_20260818.jpg`；结果追加到 [`BOT-20260818-09`](ROBOT_ISSUES.md#bot-20260818-09)。
 
 ## 2026-08-17（Asia/Shanghai）
 
