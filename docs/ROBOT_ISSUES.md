@@ -57,8 +57,8 @@
   - 最终 `/odom` 和 `odom -> base_link` 航向均约 `1.009 rad`（`57.8°`），与用户现场观察的约 `60°` 一致。
   - 最终 odom 航向与 `/spin` 末反馈之间约有 `24.9°` 差值；该差值不包含在 `/spin` 反馈中。
   - 在一次性低速、基于 `/odom` 的闭环右转修正中，航向从 `57.799°` 修正到 `30.307°`，后续静态读数约 `30.2°`。
-  - 修正完成后 twist 各分量均为 `0`，diffbot controller 为 active。
+  - 修正完成后 twist 各分量均为 `0`，`diffbot_base_controller` 为 active。
 - **根因或假设**：永久根因未确认。首次重启后 release 与 spin 连续执行，release/mode transition 可能造成 `/spin` 反馈未涵盖的额外角度，但这仅是**假设**，不能写成确认根因。需要在 fresh reboot 后单独测量 release 前后的 odom 才能判断。
 - **处理**：经用户授权，在空旷处进行一次性低速 `/odom` 闭环右转，将航向修正回约 `30°`。在问题隔离前，不使用 `/spin` 作为精确原语；受控旋转测试使用 odom feedback。该方法是测试绕过方案，不是永久修复。
-- **验证**：闭环修正后 odom 为 `30.307°`，随后静态约 `30.2°`；twist 全为 `0`，diffbot controller 保持 active。
+- **验证**：闭环修正后 odom 为 `30.307°`，随后静态约 `30.2°`；twist 全为 `0`，`diffbot_base_controller` 保持 active。
 - **剩余工作/链接**：在 fresh reboot 的安全受控实验中，分别记录 release 前、release 后、spin 前、spin 反馈过程和 spin 后的 odom，首先验证 release/mode transition 是否引入航向变化；在完成隔离和重复性验证前，继续采用 odom feedback。当前状态见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md#当前问题)。
