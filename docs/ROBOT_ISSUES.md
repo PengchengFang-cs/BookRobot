@@ -190,5 +190,5 @@
 - **确认事实与证据**：旧 `0.9116 m` 来自 `new1.2` 第 0 帧视觉吸取点，旧工程文档曾明确说明固定 `reference_base` 尚未完成现场绑定；它不是由吸盘 TCP 实际接触位姿标定得到。录制画面显示第 300 帧的右臂本应已伸到桌边书本。失败后右 D01 状态为未吸附、`suction_timeout`；发送 stop 后恢复 disabled/idle、`healthy=true`。底盘停止，机械臂保留在约第 300 帧姿态。
 - **根因或假设**：已确认旧前后参考点不能用于当前抓取停靠。尚未通过下一次真机实验证明 `0.48 m` 就是 DataReplay 的最终正确距离，因此它仍是基于现有 FruitTest 停靠值的待验证替代值。
 - **处理**：FPC 抓书前后参考改为现有 `APPROACH_DISTANCE_M=0.48 m`，左右参考仍为 `-0.3151 m`，Z offset 不变；`legacy/vector` 两种底盘执行方法均保留。另修复旧 DataReplay 的 `sudo systemctl` 阻塞，改为普通用户直接 `systemctl`；回放或吸附失败后自动发送 `right_suction_stop`。
-- **验证**：本地完整 78 项测试通过，覆盖新固定前后距离、无 sudo 的服务切换以及失败后的 D01 stop；尚未再次移动机器人。
+- **验证**：本地完整 78 项测试通过；commit `a2e7467c7d1da3d3c83895d89413e466eac62bbc` 已直接部署到 Wanda，机器人端模块编译和 35 项相关非运动测试通过。右 D01 复查为 disabled/idle、`healthy=true`，`manipulation.service` 与 `controller.service` 均 active；尚未再次移动机器人。
 - **剩余工作/链接**：先由现场把机械臂恢复到下一次回放起始姿态，再在用户观察下验证 `0.48 m` 停靠和完整 Pick。当前状态见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md#当前问题)。
