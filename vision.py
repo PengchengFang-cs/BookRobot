@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import rclpy
 from cv_bridge import CvBridge
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image, JointState
 
@@ -52,9 +53,10 @@ class Vision:
         self.book_client = book_client or BookVisionClient.from_config()
 
         sensor_qos = rclpy.qos.qos_profile_sensor_data
-        node.create_subscription(Image, COLOR_TOPIC, self._color, sensor_qos)
-        node.create_subscription(Image, DEPTH_TOPIC, self._depth, sensor_qos)
-        node.create_subscription(CameraInfo, CAMERA_INFO_TOPIC, self._info, sensor_qos)
+        rgbd_qos = QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE)
+        node.create_subscription(Image, COLOR_TOPIC, self._color, rgbd_qos)
+        node.create_subscription(Image, DEPTH_TOPIC, self._depth, rgbd_qos)
+        node.create_subscription(CameraInfo, CAMERA_INFO_TOPIC, self._info, rgbd_qos)
         node.create_subscription(JointState, JOINT_STATES_TOPIC, self._joints, sensor_qos)
         node.create_subscription(
             JointState, BODY_JOINT_STATES_TOPIC, self._joints, sensor_qos

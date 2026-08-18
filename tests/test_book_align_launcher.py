@@ -56,6 +56,13 @@ class BookAlignLauncherTests(unittest.TestCase):
             self.assertIn(required, text)
         self.assertNotIn("BEGIN PRIVATE KEY", text)
 
+    def test_large_rgbd_frames_use_reliable_qos(self):
+        text = (ROOT / "vision.py").read_text(encoding="utf-8")
+
+        self.assertIn("ReliabilityPolicy.RELIABLE", text)
+        self.assertIn("Image, COLOR_TOPIC, self._color, rgbd_qos", text)
+        self.assertIn("Image, DEPTH_TOPIC, self._depth, rgbd_qos", text)
+
 
 if __name__ == "__main__":
     unittest.main()
