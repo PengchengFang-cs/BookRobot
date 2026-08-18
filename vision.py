@@ -214,6 +214,7 @@ class Vision:
             try:
                 detected = self._detect_once(snapshot, joints)
                 if detected is None:
+                    print("[视觉] 当前帧没有可用的书本几何")
                     continue
                 books, captured_at_ns = detected
                 transform = None
@@ -245,4 +246,11 @@ class Vision:
                 return results
             except Exception as error:
                 self.node.get_logger().warning(f"这一帧不能用: {error}")
+                print(f"[视觉] 这一帧不能用: {type(error).__name__}: {error}")
+        print(
+            "[视觉] 检测超时，缓存数量: "
+            f"color={len(self.sensor_sync.colors)}, "
+            f"depth={len(self.sensor_sync.depths)}, "
+            f"info={len(self.sensor_sync.infos)}"
+        )
         return []
