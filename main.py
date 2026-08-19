@@ -108,7 +108,10 @@ def run_real(args):
                 run_book_pick_once(
                     vision,
                     navigator,
-                    Stage1BookPickReplayer(),
+                    Stage1BookPickReplayer(
+                        joint_positions=lambda: dict(vision.joints),
+                        spin_feedback=lambda: rclpy.spin_once(node, timeout_sec=0.0),
+                    ),
                     replay_reference,
                     say,
                     coarse=args.book_coarse,

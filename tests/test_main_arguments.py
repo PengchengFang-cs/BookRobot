@@ -76,7 +76,15 @@ class MainArgumentTests(unittest.TestCase):
         legacy = text.index("from navigation import Navigation", branch)
         self.assertLess(branch, legacy)
         self.assertIn("BookAlignmentNavigator(mode=args.book_align_mode)", text)
-        self.assertIn("Stage1BookPickReplayer()", text)
+        self.assertIn(
+            "Stage1BookPickReplayer(\n"
+            "                        joint_positions=lambda: dict(vision.joints),",
+            text,
+        )
+        self.assertIn(
+            "spin_feedback=lambda: rclpy.spin_once(node, timeout_sec=0.0)",
+            text,
+        )
 
     def test_book_modes_load_and_pass_the_replay_reference(self):
         from pathlib import Path

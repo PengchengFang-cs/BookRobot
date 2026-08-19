@@ -7,19 +7,32 @@ import numpy as np
 from book_pick_replay import (
     LegacyV3PickRuntime,
     Stage1BookPickReplayer,
+    build_frame_zero_preroll,
+    shift_frame_events_after_publish,
     shift_pick_episode_torso,
 )
 
 
 def _episode(values):
     torso = np.asarray(values, dtype=float).reshape((-1, 1))
+    frames = len(torso)
     return SimpleNamespace(
-        num_frames=len(torso),
+        num_frames=frames,
+        timestamps=np.arange(frames, dtype=float) * 0.05,
         actions={
-            "target_qpos_arms": np.zeros((len(torso), 16)),
+            "target_qpos_arms": np.zeros((frames, 16)),
+            "target_qpos_head": np.zeros((frames, 2)),
             "target_qpos_torso": torso,
+            "target_base_vel": np.zeros((frames, 2)),
+            "target_qpos_left_gripper": np.zeros((frames, 1)),
+            "target_qpos_right_dexhand": np.zeros((frames, 2)),
         },
-        observations={"target_qpos_torso": torso},
+        observations={
+            "target_qpos_torso": torso,
+            "qpos_arms": np.zeros((frames, 16)),
+            "qpos_head": np.zeros((frames, 2)),
+            "qpos_torso": torso.copy(),
+        },
     )
 
 
@@ -69,6 +82,51 @@ class ShiftPickEpisodeTests(unittest.TestCase):
             shift_pick_episode_torso(source, 0.01)
 
 
+class FrameZeroPostureTests(unittest.TestCase):
+    def test_builds_bounded_preroll_that_ends_at_frame_zero(self):
+        episode = _episode([0.20, 0.20])
+        episode.actions["target_qpos_arms"][0] = np.linspace(0.0, 0.15, 16)
+        episode.actions["target_qpos_head"][0] = (0.02, 0.25)
+        joints = {
+            **{f"joint_la{i}": 0.0 for i in range(8)},
+            **{f"joint_ra{i}": 0.0 for i in range(8)},
+            "joint_head0": 0.0,
+            "joint_head1": 0.20,
+            "body_joint": 0.20,
+        }
+
+        preroll = build_frame_zero_preroll(joints, episode)
+
+        self.assertGreater(preroll.num_frames, 1)
+        np.testing.assert_allclose(
+            preroll.actions["target_qpos_arms"][-1],
+            episode.actions["target_qpos_arms"][0],
+        )
+        np.testing.assert_allclose(
+            preroll.actions["target_qpos_head"][-1],
+            episode.actions["target_qpos_head"][0],
+        )
+        np.testing.assert_allclose(
+            preroll.actions["target_qpos_torso"][-1],
+            episode.actions["target_qpos_torso"][0],
+        )
+        self.assertLessEqual(
+            np.max(np.abs(np.diff(preroll.actions["target_qpos_arms"], axis=0))),
+            0.0100001,
+        )
+        self.assertTrue(np.all(preroll.actions["target_base_vel"] == 0.0))
+
+    def test_d01_frame_event_is_shifted_until_after_recorded_frame_publish(self):
+        shifted = shift_frame_events_after_publish(
+            [{"frame_index": 300, "command": "right_suction_start"}]
+        )
+
+        self.assertEqual(
+            shifted,
+            [{"frame_index": 301, "command": "right_suction_start"}],
+        )
+
+
 class _Runtime:
     def __init__(self, *, holding=True, fail_replay=False):
         self.source = _episode([0.20, 0.21, 0.22])
@@ -83,8 +141,9 @@ class _Runtime:
         self.calls.append("load")
         return self.source
 
-    def preposition_torso(self, target_m):
-        self.calls.append(("preposition", target_m))
+    def preposition_frame_zero(self, episode):
+        target_m = float(episode.actions["target_qpos_torso"][0, 0])
+        self.calls.append(("preposition_frame_zero", target_m))
         return target_m - 0.001
 
     def replay_pick(self, episode):
@@ -114,7 +173,7 @@ class Stage1BookPickReplayerTests(unittest.TestCase):
         result = Stage1BookPickReplayer(runtime=runtime).pick(0.012)
 
         self.assertEqual(runtime.calls[0], "load")
-        self.assertEqual(runtime.calls[1][0], "preposition")
+        self.assertEqual(runtime.calls[1][0], "preposition_frame_zero")
         self.assertAlmostEqual(runtime.calls[1][1], 0.212)
         self.assertEqual(runtime.calls[2:], ["replay", "holding", "close"])
         self.assertEqual(result.frames_sent, 3)
@@ -163,6 +222,11 @@ class _ReplayAdapter:
                 "timeout_seconds": 140.0,
                 "allow_base_motion": False,
                 "contract_validation_only": True,
+                "required_action_channels": [
+                    "target_qpos_arms",
+                    "target_qpos_head",
+                    "target_qpos_torso",
+                ],
                 "d01_events": [
                     {"frame_index": 300, "command": "right_suction_start"}
                 ],
@@ -190,6 +254,9 @@ class _ReplayAdapter:
 
     def _contract_validation_errors(self, _module, _episode, _entry):
         return []
+
+    def _publish_frames(self, *_args):
+        raise AssertionError("fake _run_episode does not publish frames")
 
     def _run_episode(
         self, _module, episode, entry, asset_id, context, _deadline, before
@@ -256,6 +323,32 @@ class _NavRuntime:
         return SimpleNamespace(kind=kind, value=value, axis=axis)
 
 
+class _Publisher:
+    def get_subscription_count(self):
+        return 1
+
+
+class _ReplayNode:
+    def __init__(self, episode, events):
+        self.episode = episode
+        self.events = events
+        self.pub_arms = _Publisher()
+        self.pub_gripper = _Publisher()
+        self.pub_dexhand = _Publisher()
+        self.pub_head = _Publisher()
+        self.pub_torso = _Publisher()
+        self.pub_base = _Publisher()
+
+    def _publish_frame(self, frame):
+        self.events.append(
+            (
+                "preroll",
+                frame,
+                tuple(self.episode.actions["target_base_vel"][frame]),
+            )
+        )
+
+
 class LegacyV3PickRuntimeTests(unittest.TestCase):
     def _runtime(self, frame_count=607, reported_frames=None):
         episode = _episode([0.212] * frame_count)
@@ -317,7 +410,7 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "607"):
             runtime.load_episode()
 
-    def test_replays_only_pick_with_base_disabled_and_frame_300_d01_event(self):
+    def test_replays_pick_with_recorded_base_enabled_and_frame_300_d01_event(self):
         runtime, replay, _nav, episode = self._runtime()
         runtime.load_episode()
 
@@ -328,12 +421,93 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
         sent_episode, entry, asset_id, _context, before = replay.run_calls[0]
         self.assertIs(sent_episode, episode)
         self.assertEqual(asset_id, "S1_TABLE_PICK_BOOK")
-        self.assertFalse(entry["allow_base_motion"])
+        self.assertTrue(entry["allow_base_motion"])
+        self.assertIn("target_base_vel", entry["required_action_channels"])
         self.assertEqual(
             entry["d01_events"],
             [{"frame_index": 300, "command": "right_suction_start"}],
         )
         self.assertEqual(before, 0)
+
+    def test_exact_publish_prepositions_all_frame_zero_joints_before_recording(self):
+        runtime, _replay, _nav, episode = self._runtime()
+        target_arms = np.linspace(0.0, 0.15, 16)
+        episode.actions["target_qpos_arms"][0] = target_arms
+        episode.actions["target_qpos_head"][0] = (0.02, 0.25)
+        feedback = [
+            {
+                **{f"joint_la{i}": 0.0 for i in range(8)},
+                **{f"joint_ra{i}": 0.0 for i in range(8)},
+                "joint_head0": 0.0,
+                "joint_head1": 0.20,
+                "body_joint": 0.212,
+            },
+            {
+                **{
+                    f"joint_la{i}": float(target_arms[i])
+                    for i in range(8)
+                },
+                **{
+                    f"joint_ra{i}": float(target_arms[i + 8])
+                    for i in range(8)
+                },
+                "joint_head0": 0.02,
+                "joint_head1": 0.25,
+                "body_joint": 0.212,
+            },
+        ]
+        runtime.joint_positions = lambda: feedback.pop(0)
+        runtime.spin_feedback = lambda: None
+        events = []
+        node = _ReplayNode(episode, events)
+        module = SimpleNamespace(
+            rclpy=SimpleNamespace(spin_once=lambda *_args, **_kwargs: None)
+        )
+
+        def original(_module, original_node, original_episode, entry, *_args):
+            self.assertIs(original_node.episode, original_episode)
+            events.append(("recording", entry["d01_events"]))
+            return "published"
+
+        result = runtime._publish_exact_frames(
+            original,
+            module,
+            node,
+            episode,
+            runtime.entry,
+            runtime.context,
+            20.0,
+            0,
+        )
+
+        self.assertEqual(result, "published")
+        self.assertEqual(events[-1][0], "recording")
+        self.assertTrue(all(event[2] == (0.0, 0.0) for event in events[:-1]))
+        self.assertEqual(
+            events[-1][1],
+            [{"frame_index": 301, "command": "right_suction_start"}],
+        )
+
+    def test_rejects_missing_or_malformed_exact_replay_channels(self):
+        for channel, shape in (
+            ("target_qpos_arms", (607, 15)),
+            ("target_qpos_head", (607, 1)),
+            ("target_qpos_torso", (607, 2)),
+            ("target_base_vel", (607, 1)),
+        ):
+            with self.subTest(channel=channel):
+                runtime, _replay, _nav, episode = self._runtime()
+                episode.actions[channel] = np.zeros(shape)
+                with self.assertRaisesRegex(RuntimeError, channel):
+                    runtime.load_episode()
+
+    def test_nonzero_recorded_base_trajectory_cannot_be_disabled(self):
+        runtime, replay, _nav, episode = self._runtime()
+        episode.actions["target_base_vel"][10, 0] = 0.1
+        runtime.load_episode()
+
+        self.assertTrue(runtime.entry["allow_base_motion"])
+        self.assertIn("target_base_vel", runtime.entry["required_action_channels"])
 
     def test_rejects_success_result_that_did_not_publish_all_607_frames(self):
         runtime, _replay, _nav, episode = self._runtime(reported_frames=606)

@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 import uuid
 
 import numpy as np
@@ -19,6 +20,79 @@ V3_ROOT = Path("/home/unix_ai/WHRC")
 V3_CONFIG_PATH = V3_ROOT / "v3_pipeline/config/v3_robot_stage1.json"
 PICK_ASSET_ID = "S1_TABLE_PICK_BOOK"
 PICK_FRAME_COUNT = 607
+EXACT_ACTION_SHAPES = {
+    "target_qpos_arms": (16,),
+    "target_qpos_head": (2,),
+    "target_qpos_torso": (1,),
+    "target_base_vel": (2,),
+    "target_qpos_left_gripper": (1,),
+    "target_qpos_right_dexhand": (2,),
+}
+ARM_PREROLL_STEP_RAD = 0.01
+HEAD_PREROLL_STEP_RAD = 0.01
+TORSO_PREROLL_STEP_M = 0.003
+PREROLL_PERIOD_S = 0.05
+CONTROLLER_DISCOVERY_TIMEOUT_S = 5.0
+FRAME_ZERO_ARM_TOLERANCE_RAD = 0.03
+FRAME_ZERO_HEAD_TOLERANCE_RAD = 0.02
+FRAME_ZERO_TORSO_TOLERANCE_M = 0.005
+
+
+def _joint_vector(joints, names):
+    values = np.asarray([joints[name] for name in names], dtype=float)
+    if not np.isfinite(values).all():
+        raise ValueError("frame-zero feedback contains non-finite joint values")
+    return values
+
+
+def build_frame_zero_preroll(joints, episode):
+    """Build a base-stationary interpolation ending at recorded frame zero."""
+
+    arm_names = [f"joint_la{index}" for index in range(8)] + [
+        f"joint_ra{index}" for index in range(8)
+    ]
+    current_arms = _joint_vector(joints, arm_names)
+    current_head = _joint_vector(joints, ("joint_head0", "joint_head1"))
+    current_torso = _joint_vector(joints, ("body_joint",))
+    target_arms = np.asarray(episode.actions["target_qpos_arms"][0], dtype=float)
+    target_head = np.asarray(episode.actions["target_qpos_head"][0], dtype=float)
+    target_torso = np.asarray(
+        episode.actions["target_qpos_torso"][0], dtype=float
+    )
+    steps = max(
+        1,
+        math.ceil(float(np.max(np.abs(target_arms - current_arms))) / ARM_PREROLL_STEP_RAD),
+        math.ceil(float(np.max(np.abs(target_head - current_head))) / HEAD_PREROLL_STEP_RAD),
+        math.ceil(float(np.max(np.abs(target_torso - current_torso))) / TORSO_PREROLL_STEP_M),
+    )
+
+    def interpolate(start, target):
+        fractions = np.arange(1, steps + 1, dtype=float).reshape((-1, 1)) / steps
+        return start + fractions * (target - start)
+
+    actions = {
+        "target_qpos_arms": interpolate(current_arms, target_arms),
+        "target_qpos_head": interpolate(current_head, target_head),
+        "target_qpos_torso": interpolate(current_torso, target_torso),
+        "target_base_vel": np.zeros((steps, 2), dtype=float),
+    }
+    return SimpleNamespace(
+        num_frames=steps,
+        timestamps=np.arange(steps, dtype=float) * PREROLL_PERIOD_S,
+        actions=actions,
+        observations={},
+    )
+
+
+def shift_frame_events_after_publish(events):
+    """Adapt pre-frame legacy events so they run after their recorded frame."""
+
+    shifted = []
+    for event in events:
+        adjusted = dict(event)
+        adjusted["frame_index"] = int(adjusted["frame_index"]) + 1
+        shifted.append(adjusted)
+    return shifted
 
 
 def _finite_offset(value):
@@ -123,6 +197,9 @@ class LegacyV3PickRuntime:
         check_block,
         nav_runtime,
         monotonic_clock=time.monotonic,
+        wait_function=time.sleep,
+        joint_positions=None,
+        spin_feedback=None,
     ):
         self.replay_adapter = replay_adapter
         self.context = context
@@ -130,7 +207,16 @@ class LegacyV3PickRuntime:
         self.check_block = check_block
         self.nav_runtime = nav_runtime
         self.monotonic_clock = monotonic_clock
-        self.entry = replay_adapter.assets[PICK_ASSET_ID]
+        self.wait_function = wait_function
+        self.joint_positions = joint_positions
+        self.spin_feedback = spin_feedback or (lambda: None)
+        self.entry = dict(replay_adapter.assets[PICK_ASSET_ID])
+        self.entry["allow_base_motion"] = True
+        required = list(self.entry.get("required_action_channels", ()))
+        for channel in EXACT_ACTION_SHAPES:
+            if channel not in required:
+                required.append(channel)
+        self.entry["required_action_channels"] = required
         self.module = None
         self._closed = False
 
@@ -159,6 +245,17 @@ class LegacyV3PickRuntime:
         )
         if contract_error:
             raise RuntimeError(contract_error)
+        actions = getattr(episode, "actions", {})
+        for channel, trailing_shape in EXACT_ACTION_SHAPES.items():
+            value = actions.get(channel)
+            expected = (PICK_FRAME_COUNT, *trailing_shape)
+            if value is None or np.asarray(value).shape != expected:
+                actual = None if value is None else np.asarray(value).shape
+                raise RuntimeError(
+                    f"{channel} must have exact shape {expected}, got {actual}"
+                )
+            if not np.isfinite(np.asarray(value, dtype=float)).all():
+                raise RuntimeError(f"{channel} contains non-finite values")
         self.module = module
         return episode
 
@@ -179,22 +276,153 @@ class LegacyV3PickRuntime:
             finally:
                 adapter.destroy_node()
 
+    def preposition_frame_zero(self, episode):
+        """Move the lift to the shifted recording baseline before raw replay."""
+
+        target = float(episode.actions["target_qpos_torso"][0, 0])
+        return self.preposition_torso(target)
+
+    def _wait_for_controller_subscribers(self, node, deadline):
+        publishers = {
+            "arms": node.pub_arms,
+            "left_gripper": node.pub_gripper,
+            "right_dexhand": node.pub_dexhand,
+            "head": node.pub_head,
+            "torso": node.pub_torso,
+            "base": node.pub_base,
+        }
+        discovery_deadline = min(
+            float(deadline),
+            self.monotonic_clock() + CONTROLLER_DISCOVERY_TIMEOUT_S,
+        )
+        while self.monotonic_clock() < discovery_deadline:
+            missing = [
+                name
+                for name, publisher in publishers.items()
+                if publisher.get_subscription_count() < 1
+            ]
+            if not missing:
+                return
+            self.spin_feedback()
+            self.wait_function(0.05)
+        raise RuntimeError(
+            "DataReplay controllers have no subscribers: " + ",".join(missing)
+        )
+
+    @staticmethod
+    def _feedback_error(joints, episode):
+        arm_names = [f"joint_la{index}" for index in range(8)] + [
+            f"joint_ra{index}" for index in range(8)
+        ]
+        actual_arms = _joint_vector(joints, arm_names)
+        actual_head = _joint_vector(joints, ("joint_head0", "joint_head1"))
+        actual_torso = _joint_vector(joints, ("body_joint",))
+        return (
+            float(np.max(np.abs(
+                actual_arms - episode.actions["target_qpos_arms"][0]
+            ))),
+            float(np.max(np.abs(
+                actual_head - episode.actions["target_qpos_head"][0]
+            ))),
+            float(np.max(np.abs(
+                actual_torso - episode.actions["target_qpos_torso"][0]
+            ))),
+        )
+
+    def _publish_exact_frames(
+        self,
+        original_publish,
+        module,
+        node,
+        episode,
+        entry,
+        context,
+        deadline,
+        before,
+    ):
+        if self.joint_positions is None:
+            raise RuntimeError("frame-zero joint feedback provider is unavailable")
+        self._wait_for_controller_subscribers(node, deadline)
+        self.spin_feedback()
+        preroll = build_frame_zero_preroll(self.joint_positions(), episode)
+        original_episode = node.episode
+        try:
+            node.episode = preroll
+            for frame in range(preroll.num_frames):
+                if self.monotonic_clock() >= deadline:
+                    raise RuntimeError("timeout while restoring frame-zero posture")
+                node._publish_frame(frame)
+                if hasattr(module.rclpy, "spin_once"):
+                    module.rclpy.spin_once(node, timeout_sec=0.0)
+                self.spin_feedback()
+                if frame + 1 < preroll.num_frames:
+                    self.wait_function(PREROLL_PERIOD_S)
+        finally:
+            node.episode = original_episode
+
+        self.spin_feedback()
+        arm_error, head_error, torso_error = self._feedback_error(
+            self.joint_positions(), episode
+        )
+        if (
+            arm_error > FRAME_ZERO_ARM_TOLERANCE_RAD
+            or head_error > FRAME_ZERO_HEAD_TOLERANCE_RAD
+            or torso_error > FRAME_ZERO_TORSO_TOLERANCE_M
+        ):
+            raise RuntimeError(
+                "frame-zero posture restore failed: "
+                f"arms={arm_error:.4f} rad, head={head_error:.4f} rad, "
+                f"torso={torso_error:.4f} m"
+            )
+
+        exact_entry = dict(entry)
+        exact_entry["d01_events"] = shift_frame_events_after_publish(
+            entry["d01_events"]
+        )
+        return original_publish(
+            module,
+            node,
+            episode,
+            exact_entry,
+            context,
+            deadline,
+            before,
+        )
+
     def replay_pick(self, episode):
-        if self.entry.get("allow_base_motion") is not False:
-            raise RuntimeError("Stage-1 Pick asset unexpectedly allows base motion")
+        if self.entry.get("allow_base_motion") is not True:
+            raise RuntimeError("Stage-1 Pick must replay its recorded base motion")
         if self.module is None:
             raise RuntimeError("Stage-1 Pick episode must be loaded before replay")
         before = int(self.replay_adapter.frames_sent)
         deadline = self.monotonic_clock() + float(self.entry["timeout_seconds"])
-        result = self.replay_adapter._run_episode(
-            self.module,
-            episode,
-            self.entry,
-            PICK_ASSET_ID,
-            self.context,
-            deadline,
-            before,
-        )
+        original_publish = self.replay_adapter._publish_frames
+
+        def exact_publish(module, node, replay_episode, entry, context, end, start):
+            return self._publish_exact_frames(
+                original_publish,
+                module,
+                node,
+                replay_episode,
+                entry,
+                context,
+                end,
+                start,
+            )
+
+        self.replay_adapter._publish_frames = exact_publish
+        try:
+            result = self.replay_adapter._run_episode(
+                self.module,
+                episode,
+                self.entry,
+                PICK_ASSET_ID,
+                self.context,
+                deadline,
+                before,
+            )
+        finally:
+            self.replay_adapter._publish_frames = original_publish
         if not _success(result):
             raise RuntimeError(
                 "Stage-1 Pick DataReplay failed: "
@@ -235,7 +463,12 @@ class LegacyV3PickRuntime:
 
 
 def load_legacy_v3_pick_runtime(
-    *, root=V3_ROOT, config_path=V3_CONFIG_PATH, nav_runtime=None
+    *,
+    root=V3_ROOT,
+    config_path=V3_CONFIG_PATH,
+    nav_runtime=None,
+    joint_positions=None,
+    spin_feedback=None,
 ):
     """Load only the old V3 components needed for one reviewed table Pick."""
 
@@ -267,25 +500,32 @@ def load_legacy_v3_pick_runtime(
         pick_block=blocks["S1-B1-02"],
         check_block=blocks["S1-B1-03"],
         nav_runtime=nav_runtime,
+        joint_positions=joint_positions,
+        spin_feedback=spin_feedback,
     )
 
 
 class Stage1BookPickReplayer:
     """Apply visual Z once, replay the Pick episode, and leave the book held."""
 
-    def __init__(self, runtime=None):
+    def __init__(self, runtime=None, *, joint_positions=None, spin_feedback=None):
         self.runtime = runtime
+        self.joint_positions = joint_positions
+        self.spin_feedback = spin_feedback
 
     def pick(self, z_offset_m):
         offset = _finite_offset(z_offset_m)
         if self.runtime is None:
-            self.runtime = load_legacy_v3_pick_runtime()
+            self.runtime = load_legacy_v3_pick_runtime(
+                joint_positions=self.joint_positions,
+                spin_feedback=self.spin_feedback,
+            )
         replay_started = False
         try:
             episode = self.runtime.load_episode()
             shifted = shift_pick_episode_torso(episode, offset)
             torso_target = float(shifted.actions["target_qpos_torso"][0, 0])
-            torso_actual = float(self.runtime.preposition_torso(torso_target))
+            torso_actual = float(self.runtime.preposition_frame_zero(shifted))
             replay_started = True
             replay = self.runtime.replay_pick(shifted)
             holding = bool(self.runtime.confirm_holding())
