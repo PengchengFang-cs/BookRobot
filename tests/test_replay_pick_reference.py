@@ -71,11 +71,20 @@ class ReplayPickReferenceTests(unittest.TestCase):
             )
 
         self.assertEqual(result.reference_frame_index, 0)
+        self.assertEqual(result.asset_id, "S1_TABLE_PICK_BOOK")
+        self.assertEqual(len(result.hdf5_sha256), 64)
         np.testing.assert_allclose(
             result.recorded_book_suction_point_base_m,
             (0.35, 0.25, 1.0),
             atol=1e-12,
         )
+        np.testing.assert_allclose(
+            result.recorded_book_long_axis_base,
+            (1.0, 0.0, 0.0),
+            atol=1e-12,
+        )
+        self.assertAlmostEqual(result.recorded_book_long_extent_m, 0.30)
+        self.assertAlmostEqual(result.recorded_book_short_extent_m, 0.20)
 
     def test_scales_x_and_y_intrinsics_independently(self):
         scaled = scale_intrinsics(
@@ -86,8 +95,14 @@ class ReplayPickReferenceTests(unittest.TestCase):
 
         self.assertAlmostEqual(scaled.fx, 1000.0 * 224.0 / 1920.0)
         self.assertAlmostEqual(scaled.fy, 900.0 * 224.0 / 1080.0)
-        self.assertAlmostEqual(scaled.cx, 960.0 * 224.0 / 1920.0)
-        self.assertAlmostEqual(scaled.cy, 540.0 * 224.0 / 1080.0)
+        self.assertAlmostEqual(
+            scaled.cx,
+            (960.0 + 0.5) * 224.0 / 1920.0 - 0.5,
+        )
+        self.assertAlmostEqual(
+            scaled.cy,
+            (540.0 + 0.5) * 224.0 / 1080.0 - 0.5,
+        )
 
     def test_finds_largest_new_blue_component_inside_roi(self):
         baseline = np.zeros((40, 60, 3), dtype=np.uint8)
@@ -192,6 +207,10 @@ class ReplayPickReferenceTests(unittest.TestCase):
             asset_id="S1_TABLE_PICK_BOOK",
             reference_frame_index=0,
             recorded_book_suction_point_base_m=(0.935, -0.304, 0.754),
+            recorded_book_long_axis_base=(1.0, 0.0, 0.0),
+            recorded_book_long_extent_m=0.30,
+            recorded_book_short_extent_m=0.20,
+            hdf5_sha256="a" * 64,
         )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "reference.json"

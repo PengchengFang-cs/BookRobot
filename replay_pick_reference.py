@@ -1,6 +1,7 @@
 """DataReplay image/depth calibration for the recorded suction contact."""
 
 from dataclasses import asdict, dataclass
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -22,6 +23,10 @@ class ReplayPickReference:
     asset_id: str
     reference_frame_index: int
     recorded_book_suction_point_base_m: tuple[float, float, float]
+    recorded_book_long_axis_base: tuple[float, float, float]
+    recorded_book_long_extent_m: float
+    recorded_book_short_extent_m: float
+    hdf5_sha256: str
 
 
 def scale_intrinsics(intrinsics, *, source_size, target_size):
@@ -36,8 +41,8 @@ def scale_intrinsics(intrinsics, *, source_size, target_size):
     return CameraIntrinsics(
         fx=float(intrinsics.fx) * scale_x,
         fy=float(intrinsics.fy) * scale_y,
-        cx=float(intrinsics.cx) * scale_x,
-        cy=float(intrinsics.cy) * scale_y,
+        cx=(float(intrinsics.cx) + 0.5) * scale_x - 0.5,
+        cy=(float(intrinsics.cy) + 0.5) * scale_y - 0.5,
     )
 
 
@@ -309,13 +314,25 @@ def calibrate_replay_pick_reference(
                 float(heads[frame_index, 1]),
             ),
         )
-        point = tuple(float(value) for value in detected_book.geometry.suction_point)
+        geometry = detected_book.geometry
+        point = tuple(float(value) for value in geometry.suction_point)
         if len(point) != 3 or not all(math.isfinite(value) for value in point):
             raise ValueError("recorded_book_suction_point_invalid")
+        long_axis = tuple(float(value) for value in geometry.long_axis)
+        if len(long_axis) != 3 or not all(math.isfinite(value) for value in long_axis):
+            raise ValueError("recorded_book_long_axis_invalid")
+    digest = hashlib.sha256()
+    with Path(h5_path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
     return ReplayPickReference(
         asset_id=str(asset_id),
         reference_frame_index=frame_index,
         recorded_book_suction_point_base_m=point,
+        recorded_book_long_axis_base=long_axis,
+        recorded_book_long_extent_m=float(geometry.long_extent_m),
+        recorded_book_short_extent_m=float(geometry.short_extent_m),
+        hdf5_sha256=digest.hexdigest(),
     )
 
 
@@ -338,4 +355,14 @@ def load_replay_pick_reference(path):
             float(value)
             for value in payload["recorded_book_suction_point_base_m"]
         ),
+        recorded_book_long_axis_base=tuple(
+            float(value) for value in payload["recorded_book_long_axis_base"]
+        ),
+        recorded_book_long_extent_m=float(
+            payload["recorded_book_long_extent_m"]
+        ),
+        recorded_book_short_extent_m=float(
+            payload["recorded_book_short_extent_m"]
+        ),
+        hdf5_sha256=str(payload["hdf5_sha256"]),
     )

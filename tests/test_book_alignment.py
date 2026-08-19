@@ -30,8 +30,17 @@ def _geometry(*, suction_point, long_axis=(1.0, 0.0, 0.0)):
     )
 
 
-def _book(point):
-    geometry = _geometry(suction_point=point)
+def _book(point, *, long_axis=(1.0, 0.0, 0.0), long_extent=0.30, short_extent=0.20):
+    geometry = BookGeometry(
+        suction_point=point,
+        long_axis=long_axis,
+        short_axis_right_to_left=(-long_axis[1], long_axis[0], 0.0),
+        long_extent_m=long_extent,
+        short_extent_m=short_extent,
+        confidence=0.9,
+        long_inset_m=0.13,
+        right_inset_m=0.10,
+    )
     return SimpleNamespace(suction_point=point, geometry=geometry)
 
 
@@ -40,6 +49,10 @@ def _reference(**changes):
         asset_id="S1_TABLE_PICK_BOOK",
         reference_frame_index=0,
         recorded_book_suction_point_base_m=(0.715, -0.391, 0.713),
+        recorded_book_long_axis_base=(1.0, 0.0, 0.0),
+        recorded_book_long_extent_m=0.30,
+        recorded_book_short_extent_m=0.20,
+        hdf5_sha256="a" * 64,
     )
     values.update(changes)
     return ReplayPickReference(**values)
@@ -127,6 +140,32 @@ class BookAlignmentTests(unittest.TestCase):
             reassociate_book(
                 [],
                 predicted_point_m=(0.7, -0.3, 0.7),
+                replay_reference=_reference(),
+            )
+
+    def test_reassociation_rejects_candidate_far_from_prediction(self):
+        with self.assertRaisesRegex(RuntimeError, "目标书重关联失败"):
+            reassociate_book(
+                [_book((1.20, 0.30, 0.72))],
+                predicted_point_m=(0.70, -0.30, 0.72),
+                replay_reference=_reference(),
+            )
+
+    def test_reassociation_rejects_wrong_size_or_yaw(self):
+        angle = math.radians(10.0)
+        wrong_yaw = _book(
+            (0.71, -0.39, 0.72),
+            long_axis=(math.cos(angle), math.sin(angle), 0.0),
+        )
+        wrong_size = _book(
+            (0.71, -0.39, 0.72),
+            long_extent=0.40,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "目标书重关联失败"):
+            reassociate_book(
+                [wrong_yaw, wrong_size],
+                predicted_point_m=(0.71, -0.39, 0.72),
                 replay_reference=_reference(),
             )
 

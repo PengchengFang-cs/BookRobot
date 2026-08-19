@@ -1,9 +1,17 @@
 {
   "asset_id": "S1_TABLE_PICK_BOOK",
+  "hdf5_sha256": "3fcb24599ffce157ffd9d0d9162e95b0ae7b742f43bb8db24d1a14b140a3186f",
+  "recorded_book_long_axis_base": [
+    0.9990367339494446,
+    -0.043881707118419266,
+    0.0
+  ],
+  "recorded_book_long_extent_m": 0.2576602257578278,
+  "recorded_book_short_extent_m": 0.17403642654229162,
   "recorded_book_suction_point_base_m": [
-    0.9355793577583453,
-    -0.3037484280216711,
-    0.7538117409713647
+    0.935095556544132,
+    -0.3075494991071792,
+    0.7521206173913717
   ],
   "reference_frame_index": 0
 }

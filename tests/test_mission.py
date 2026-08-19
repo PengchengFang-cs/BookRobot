@@ -106,6 +106,10 @@ def _reference():
         asset_id="S1_TABLE_PICK_BOOK",
         reference_frame_index=0,
         recorded_book_suction_point_base_m=(0.715, -0.391, 0.713),
+        recorded_book_long_axis_base=(1.0, 0.0, 0.0),
+        recorded_book_long_extent_m=0.30,
+        recorded_book_short_extent_m=0.20,
+        hdf5_sha256="a" * 64,
     )
 
 

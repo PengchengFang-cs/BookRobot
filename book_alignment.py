@@ -15,6 +15,9 @@ COARSE_APPROACH_REFERENCE_BASE_M = (
 # Temporary compatibility name for the one-stage mission while it is migrated.
 STAGE1_PICK_REFERENCE_BASE_M = COARSE_APPROACH_REFERENCE_BASE_M
 STAGE1_MAX_Z_OFFSET_M = 0.03
+REASSOCIATE_MAX_DISTANCE_M = 0.12
+BOOK_EXTENT_TOLERANCE_M = 0.05
+BOOK_LONG_AXIS_TOLERANCE_RAD = math.radians(3.0)
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,33 @@ def _point3(value):
     return point
 
 
+def _book_matches_reference(book, replay_reference):
+    geometry = book.geometry
+    axis = _point3(geometry.long_axis)
+    reference_axis = _point3(replay_reference.recorded_book_long_axis_base)
+    axis_xy = math.hypot(axis[0], axis[1])
+    reference_xy = math.hypot(reference_axis[0], reference_axis[1])
+    if axis_xy <= 1e-9 or reference_xy <= 1e-9:
+        return False
+    dot = (
+        axis[0] * reference_axis[0] + axis[1] * reference_axis[1]
+    ) / (axis_xy * reference_xy)
+    yaw_error = math.acos(max(-1.0, min(1.0, dot)))
+    return (
+        yaw_error <= BOOK_LONG_AXIS_TOLERANCE_RAD
+        and abs(
+            float(geometry.long_extent_m)
+            - float(replay_reference.recorded_book_long_extent_m)
+        )
+        <= BOOK_EXTENT_TOLERANCE_M
+        and abs(
+            float(geometry.short_extent_m)
+            - float(replay_reference.recorded_book_short_extent_m)
+        )
+        <= BOOK_EXTENT_TOLERANCE_M
+    )
+
+
 def select_coarse_book(books):
     """Choose a book for the approximate 0.48 m working-range approach."""
 
@@ -55,6 +85,8 @@ def select_coarse_book(books):
 def build_replay_alignment_target(*, book, replay_reference):
     """Build the precise target from one asset's recorded contact geometry."""
 
+    if not _book_matches_reference(book, replay_reference):
+        raise RuntimeError("书本方向或尺寸与 DataReplay 第0帧不一致")
     observed = _point3(book.suction_point)
     reference = _point3(replay_reference.recorded_book_suction_point_base_m)
     residual = tuple(observed[index] - reference[index] for index in range(3))
@@ -75,10 +107,14 @@ def select_replay_book(books, *, replay_reference):
     reference = _point3(replay_reference.recorded_book_suction_point_base_m)
     candidates = []
     for book in books:
+        if not _book_matches_reference(book, replay_reference):
+            continue
         point = _point3(book.suction_point)
         dx = point[0] - reference[0]
         dy = point[1] - reference[1]
         candidates.append((dx * dx + dy * dy, book))
+    if not candidates:
+        raise RuntimeError("没有方向和尺寸匹配的 DataReplay 目标书")
     return min(candidates, key=lambda row: row[0])[1]
 
 
@@ -112,10 +148,16 @@ def reassociate_book(books, *, predicted_point_m, replay_reference):
     predicted = _point3(predicted_point_m)
     candidates = []
     for book in books:
+        if not _book_matches_reference(book, replay_reference):
+            continue
         point = _point3(book.suction_point)
         dx = point[0] - predicted[0]
         dy = point[1] - predicted[1]
-        candidates.append((dx * dx + dy * dy, book))
+        distance_squared = dx * dx + dy * dy
+        if distance_squared <= REASSOCIATE_MAX_DISTANCE_M**2:
+            candidates.append((distance_squared, book))
+    if not candidates:
+        raise RuntimeError("目标书重关联失败：预测距离、方向或尺寸不匹配")
     return min(candidates, key=lambda row: row[0])[1]
 
 
