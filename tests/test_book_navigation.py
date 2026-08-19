@@ -169,7 +169,10 @@ class BookNavigationTests(unittest.TestCase):
             runtime.WandaCommandKind.DRIVE_BACKWARD,
             runtime.WandaCommandKind.SPIN,
         ])
-        self.assertAlmostEqual(commands[1].value, (0.012**2 + 0.025**2) ** 0.5)
+        self.assertAlmostEqual(
+            commands[1].value,
+            (0.012**2 + 0.025**2) ** 0.5 - 0.010,
+        )
         self.assertLess(abs(commands[0].value), 3.141592653589793 / 2)
         self.assertAlmostEqual(commands[2].value, -commands[0].value)
 
@@ -184,7 +187,22 @@ class BookNavigationTests(unittest.TestCase):
 
         commands = [row[0] for row in runtime.adapter.executed]
         self.assertEqual(commands[1].kind, runtime.WandaCommandKind.DRIVE_FORWARD)
-        self.assertAlmostEqual(commands[1].value, (0.1**2 + 0.02**2) ** 0.5)
+        self.assertAlmostEqual(
+            commands[1].value,
+            (0.1**2 + 0.02**2) ** 0.5 - 0.010,
+        )
+
+    def test_vector_mode_does_not_move_inside_ten_millimetres(self):
+        runtime = _Runtime([])
+        navigator = BookAlignmentNavigator(runtime=runtime, mode="vector")
+
+        result = navigator.align(
+            reference=(0.9, -0.3, 0.75),
+            observed=(0.906, -0.292, 0.80),
+        )
+
+        self.assertEqual(result.command_count, 0)
+        self.assertEqual(runtime.adapter.executed, [])
 
     def test_vector_mode_restores_the_captured_absolute_imu_yaw(self):
         runtime = _Runtime([], absolute_yaw=0.42)

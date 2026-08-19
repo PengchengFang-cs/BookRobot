@@ -11,6 +11,7 @@ from types import SimpleNamespace
 NAVNAV_ROOT = Path("/home/unix_ai/navnav_final")
 NAVNAV_MODULE = "runtime.wanda_nav_whrc"
 VECTOR_FINAL_YAW_TOLERANCE_RAD = math.radians(0.15)
+VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M = 0.010
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,8 @@ def _build_vector_commands(runtime, reference, observed, epsilon=1e-9):
     dx = float(observed[0]) - float(reference[0])
     dy = float(observed[1]) - float(reference[1])
     distance = math.hypot(dx, dy)
-    if distance <= epsilon:
+    drive_distance = max(0.0, distance - VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M)
+    if drive_distance <= epsilon:
         return ()
     forward_turn = _normalize_yaw(math.atan2(dy, dx))
     reverse_turn = _normalize_yaw(forward_turn + math.pi)
@@ -45,7 +47,7 @@ def _build_vector_commands(runtime, reference, observed, epsilon=1e-9):
         commands.append(
             runtime.MappedMotionCommand(runtime.WandaCommandKind.SPIN, turn, "XY")
         )
-    commands.append(runtime.MappedMotionCommand(drive_kind, distance, "XY"))
+    commands.append(runtime.MappedMotionCommand(drive_kind, drive_distance, "XY"))
     if abs(turn) > epsilon:
         commands.append(
             runtime.MappedMotionCommand(runtime.WandaCommandKind.SPIN, -turn, "XY")
