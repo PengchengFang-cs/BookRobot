@@ -10,6 +10,7 @@ from book_alignment import (
     predict_book_after_base_motion,
     reassociate_book,
     select_coarse_book,
+    select_replay_book,
 )
 from book_geometry import BookGeometry
 from config import APPROACH_DISTANCE_M
@@ -143,31 +144,37 @@ class BookAlignmentTests(unittest.TestCase):
                 replay_reference=_reference(),
             )
 
-    def test_reassociation_rejects_candidate_far_from_prediction(self):
-        with self.assertRaisesRegex(RuntimeError, "目标书重关联失败"):
-            reassociate_book(
-                [_book((1.20, 0.30, 0.72))],
-                predicted_point_m=(0.70, -0.30, 0.72),
-                replay_reference=_reference(),
-            )
-
-    def test_reassociation_rejects_wrong_size_or_yaw(self):
+    def test_selects_nearest_replay_point_across_different_book_sizes_and_yaws(self):
         angle = math.radians(10.0)
-        wrong_yaw = _book(
+        nearest = _book(
             (0.71, -0.39, 0.72),
             long_axis=(math.cos(angle), math.sin(angle), 0.0),
-        )
-        wrong_size = _book(
-            (0.71, -0.39, 0.72),
             long_extent=0.40,
         )
+        farther = _book((0.90, -0.10, 0.72))
 
-        with self.assertRaisesRegex(RuntimeError, "目标书重关联失败"):
-            reassociate_book(
-                [wrong_yaw, wrong_size],
-                predicted_point_m=(0.71, -0.39, 0.72),
-                replay_reference=_reference(),
-            )
+        selected = select_replay_book(
+            [farther, nearest], replay_reference=_reference()
+        )
+
+        self.assertIs(selected, nearest)
+
+    def test_reassociation_uses_nearest_prediction_without_size_yaw_or_distance_gate(self):
+        angle = math.radians(20.0)
+        nearest = _book(
+            (1.20, 0.30, 0.72),
+            long_axis=(math.cos(angle), math.sin(angle), 0.0),
+            long_extent=0.45,
+        )
+        farther = _book((1.50, 0.60, 0.72))
+
+        selected = reassociate_book(
+            [farther, nearest],
+            predicted_point_m=(0.70, -0.30, 0.72),
+            replay_reference=_reference(),
+        )
+
+        self.assertIs(selected, nearest)
 
     def test_reassociation_treats_a_pca_long_axis_as_undirected(self):
         same_book_flipped_axis = _book(
