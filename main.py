@@ -5,7 +5,12 @@ import argparse
 import sys
 
 from geometry import fruit_from_text
-from mission import run_book_alignment_once, run_book_pick_once, run_one_fruit
+from mission import (
+    run_book_alignment_from_current_once,
+    run_book_alignment_once,
+    run_book_pick_once,
+    run_one_fruit,
+)
 
 
 def arguments():
@@ -13,38 +18,39 @@ def arguments():
     parser.add_argument("--fruit", help="跳过语音，直接测试一种水果")
     parser.add_argument("--once", action="store_true", help="只做一次后退出")
     parser.add_argument("--fake", action="store_true", help="不连接机器人")
-    parser.add_argument("--check", action="store_true", help="只检查接口，不运动")
-    parser.add_argument(
+    operation = parser.add_mutually_exclusive_group()
+    operation.add_argument("--check", action="store_true", help="只检查接口，不运动")
+    operation.add_argument(
         "--command-check",
         action="store_true",
         help="发送保持当前位置的导航和右臂命令",
     )
-    parser.add_argument(
+    operation.add_argument(
         "--motion-check",
         action="store_true",
         help="执行小幅底盘、右臂和夹爪往返",
     )
-    parser.add_argument(
+    operation.add_argument(
         "--base-motion-check",
         action="store_true",
         help="只让底盘往返 40 cm",
     )
-    parser.add_argument(
+    operation.add_argument(
         "--arm-motion-check",
         action="store_true",
         help="只让右臂小幅往返并开合夹爪",
     )
-    parser.add_argument(
+    operation.add_argument(
         "--pick-motion-check",
         action="store_true",
         help="在空中执行一次完整抓取动作",
     )
-    parser.add_argument(
+    operation.add_argument(
         "--book-align",
         action="store_true",
         help="检测书本并对位到 DataReplay 固定抓取点，不抓取",
     )
-    parser.add_argument(
+    operation.add_argument(
         "--book-pick",
         action="store_true",
         help="检测、对位并执行一次 Stage-1 DataReplay 吸书",
@@ -56,9 +62,9 @@ def arguments():
         help="书本底盘对位方式；默认保留原 legacy，vector 合并 X/Y 位移",
     )
     parser.add_argument(
-        "--book-skip-coarse",
+        "--book-coarse",
         action="store_true",
-        help="机器人已遥操到桌前时跳过 0.48 m 粗定位",
+        help="显式启用抓书前的远距离粗定位；默认直接恢复回放第0帧位置",
     )
     return parser.parse_args()
 
@@ -105,10 +111,15 @@ def run_real(args):
                     Stage1BookPickReplayer(),
                     replay_reference,
                     say,
-                    skip_coarse=args.book_skip_coarse,
+                    coarse=args.book_coarse,
                 )
             else:
-                run_book_alignment_once(
+                align = (
+                    run_book_alignment_once
+                    if args.book_coarse
+                    else run_book_alignment_from_current_once
+                )
+                align(
                     vision,
                     navigator,
                     replay_reference,

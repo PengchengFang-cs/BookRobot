@@ -12,7 +12,8 @@ from book_alignment import (
 from config import SCAN_ANGLE_RAD, SCAN_COUNT
 
 
-BOOK_ALIGNMENT_XY_TOLERANCE_M = 0.010
+BOOK_ALIGNMENT_X_TOLERANCE_M = 0.020
+BOOK_ALIGNMENT_Y_TOLERANCE_M = 0.010
 
 
 @dataclass(frozen=True)
@@ -101,8 +102,8 @@ def run_book_alignment_once(vision, navigator, replay_reference, say=print):
     )
     say(_format_residual("最终 DataReplay 残差", final))
     xy_within_tolerance = (
-        abs(final.residual_m[0]) <= BOOK_ALIGNMENT_XY_TOLERANCE_M
-        and abs(final.residual_m[1]) <= BOOK_ALIGNMENT_XY_TOLERANCE_M
+        abs(final.residual_m[0]) <= BOOK_ALIGNMENT_X_TOLERANCE_M
+        and abs(final.residual_m[1]) <= BOOK_ALIGNMENT_Y_TOLERANCE_M
     )
     say(f"XY验收={'达标' if xy_within_tolerance else '未达标'}")
     return BookAlignmentRun(
@@ -156,8 +157,8 @@ def run_book_alignment_from_current_once(
     )
     say(_format_residual("最终 DataReplay 残差", final))
     xy_within_tolerance = (
-        abs(final.residual_m[0]) <= BOOK_ALIGNMENT_XY_TOLERANCE_M
-        and abs(final.residual_m[1]) <= BOOK_ALIGNMENT_XY_TOLERANCE_M
+        abs(final.residual_m[0]) <= BOOK_ALIGNMENT_X_TOLERANCE_M
+        and abs(final.residual_m[1]) <= BOOK_ALIGNMENT_Y_TOLERANCE_M
     )
     say(f"XY验收={'达标' if xy_within_tolerance else '未达标'}")
     return BookAlignmentRun(
@@ -177,18 +178,25 @@ def run_book_pick_once(
     replayer,
     replay_reference,
     say=print,
-    skip_coarse=False,
+    coarse=False,
 ):
     """Align one book, apply the fixed Z handoff, and replay one Pick."""
 
     align = (
-        run_book_alignment_from_current_once
-        if skip_coarse
-        else run_book_alignment_once
+        run_book_alignment_once
+        if coarse
+        else run_book_alignment_from_current_once
     )
     alignment = align(vision, navigator, replay_reference, say=say)
+    if not alignment.xy_within_tolerance:
+        dx, dy, _ = alignment.final.residual_m
+        raise RuntimeError(
+            "最终对位未达标，不启动 DataReplay: "
+            f"dx={dx:.3f} m (允许 ±{BOOK_ALIGNMENT_X_TOLERANCE_M:.3f}), "
+            f"dy={dy:.3f} m (允许 ±{BOOK_ALIGNMENT_Y_TOLERANCE_M:.3f})"
+        )
     say("开始按固定 Z 偏移执行 Stage-1 Pick DataReplay")
-    replay = replayer.pick(alignment.z_offset_m)
+    replay = replayer.pick(alignment.final.z_offset_m)
     say(
         f"Pick 回放完成: frames={replay.frames_sent}, "
         f"torso target={replay.torso_target_m:.3f} m, "

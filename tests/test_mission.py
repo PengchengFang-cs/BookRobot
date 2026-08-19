@@ -185,8 +185,28 @@ class BookAlignmentMissionTests(unittest.TestCase):
         self.assertTrue(any("DataReplay 精确偏差" in message for message in messages))
         self.assertTrue(any("最终 DataReplay 残差" in message for message in messages))
 
-    def test_pick_receives_only_precise_stage_z_offset(self):
+    def test_explicit_coarse_pick_receives_final_stage_z_offset(self):
         vision, navigator, _initial, _after_coarse, _final = self._scenario()
+        replayer = _PickReplayer()
+
+        result = run_book_pick_once(
+            vision,
+            navigator,
+            replayer,
+            _reference(),
+            say=lambda _message: None,
+            coarse=True,
+        )
+
+        self.assertEqual(replayer.offsets, [result.alignment.final.z_offset_m])
+        self.assertEqual(result.replay.frames_sent, 607)
+        self.assertTrue(result.replay.d01_holding)
+
+    def test_pick_defaults_to_current_position_without_coarse_alignment(self):
+        target = _book((0.785, -0.380, 0.723))
+        final_target = _book((0.716, -0.390, 0.723))
+        vision = _Vision([[target], [final_target]])
+        navigator = _AlignmentNavigator([_nav_result(0.070, 0.010)])
         replayer = _PickReplayer()
 
         result = run_book_pick_once(
@@ -197,9 +217,45 @@ class BookAlignmentMissionTests(unittest.TestCase):
             say=lambda _message: None,
         )
 
-        self.assertEqual(replayer.offsets, [result.alignment.precise.z_offset_m])
-        self.assertEqual(result.replay.frames_sent, 607)
-        self.assertTrue(result.replay.d01_holding)
+        self.assertIsNone(result.alignment.coarse)
+        self.assertEqual(len(navigator.calls), 1)
+        self.assertEqual(replayer.offsets, [result.alignment.final.z_offset_m])
+
+    def test_pick_does_not_replay_when_final_x_exceeds_twenty_millimetres(self):
+        target = _book((0.785, -0.380, 0.723))
+        final_target = _book((0.736, -0.390, 0.723))
+        vision = _Vision([[target], [final_target]])
+        navigator = _AlignmentNavigator([_nav_result(0.070, 0.010)])
+        replayer = _PickReplayer()
+
+        with self.assertRaisesRegex(RuntimeError, "最终对位未达标"):
+            run_book_pick_once(
+                vision,
+                navigator,
+                replayer,
+                _reference(),
+                say=lambda _message: None,
+            )
+
+        self.assertEqual(replayer.offsets, [])
+
+    def test_pick_does_not_replay_when_final_y_exceeds_ten_millimetres(self):
+        target = _book((0.785, -0.380, 0.723))
+        final_target = _book((0.715, -0.379, 0.723))
+        vision = _Vision([[target], [final_target]])
+        navigator = _AlignmentNavigator([_nav_result(0.070, 0.010)])
+        replayer = _PickReplayer()
+
+        with self.assertRaisesRegex(RuntimeError, "最终对位未达标"):
+            run_book_pick_once(
+                vision,
+                navigator,
+                replayer,
+                _reference(),
+                say=lambda _message: None,
+            )
+
+        self.assertEqual(replayer.offsets, [])
 
     def test_rejects_empty_initial_detection_before_navigation(self):
         vision = _Vision([[]])
@@ -253,11 +309,11 @@ class BookAlignmentMissionTests(unittest.TestCase):
             replayer,
             _reference(),
             say=lambda _message: None,
-            skip_coarse=True,
+            coarse=False,
         )
 
         self.assertEqual(len(navigator.calls), 1)
-        self.assertEqual(replayer.offsets, [result.alignment.precise.z_offset_m])
+        self.assertEqual(replayer.offsets, [result.alignment.final.z_offset_m])
 
 
 if __name__ == "__main__":
