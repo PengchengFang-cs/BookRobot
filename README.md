@@ -35,19 +35,22 @@ python3 test_book_perception.py
 
 结果按置信度从高到低排列，只保留置信度不低于 `0.25` 且三维几何有效的书本，最多返回 5 本；不足 5 本时返回实际数量。
 
-## DataReplay 两级对位
+## Stage 1 DataReplay 对位与抓取
 
-Stage 1 抓书不再把 `0.48 m` 当作最终抓取坐标。当前流程分成两级：
+Stage 1 默认不执行 `0.48 m` 粗定位；它只在用户已经把机器人放到桌前后，恢复 Pick 录制第 0 帧的书—机器人相对位置。远距离粗定位是显式可选项：
 
 ```text
 当前 RGB-D 找到并锁定目标书
-  -> 0.48 m 只用于进入粗略工作范围
-  -> 停稳后重新拍摄并用 odom/IMU 重关联同一本书
   -> 读取 config/stage1_pick_reference.json
   -> 当前书的 13 cm / 10 cm 点减去第 0 帧录制书本点
-  -> X/Y 底盘对位，Z 平移整条 Pick torso 轨迹
-  -> 才执行 DataReplay
+  -> X/Y 底盘恢复第 0 帧位置（X 允许 ±20 mm，Y 允许 ±10 mm）
+  -> Z 平移整条 Pick torso 轨迹
+  -> 从实时反馈平滑恢复第 0 帧双臂、头部和升降柱姿态，底盘保持零速
+  -> 完整发布原始 607 帧：底盘、双臂、头部、升降柱、左夹爪和右灵巧手
+  -> 发布第 300 帧后立即执行 D01 吸附事件
 ```
+
+只有显式添加 `--book-coarse` 时，程序才先用 `0.48 m` 进入视觉工作范围，再通过 odom/IMU 重关联同一本书并执行上述第 0 帧精确对位。`--check` 不会默认运行，并与 `--book-pick` 互斥。
 
 参考 JSON 来自只读 Pick HDF5：直接对第 0 帧运行当前整书 mask、深度和
 13 cm/10 cm 抓取点算法，再变换到录制时的 `base_link`。标定命令只读取
@@ -60,11 +63,13 @@ python3 scripts/calibrate_replay_pick_reference.py \
   --overlay logs/stage1_pick_reference_overlay.jpg
 ```
 
-`./run.sh --book-align --book-align-mode vector` 执行两级底盘对位并在最终测量后退出；`./run.sh --book-pick --book-align-mode vector` 在同一结果上继续执行一次 Pick。两者都要求参考 JSON 已经生成。
+`./run.sh --book-align --book-align-mode vector` 默认从当前位置执行第 0 帧底盘对位并在最终测量后退出；`./run.sh --book-pick --book-align-mode vector` 在同一结果上继续执行一次完整 Pick。两者都要求参考 JSON 已经生成。
 
-如果已经由遥控器完成粗定位，使用 `./run.sh --book-pick --book-skip-coarse --book-align-mode vector`。该入口不会执行旧 `0.48 m` 粗移动，只从当前位置做一次 DataReplay 精对位、复测并执行一次 Pick。
+需要程序先做粗定位时，显式使用 `./run.sh --book-pick --book-coarse --book-align-mode vector`。不加 `--book-coarse` 就不会执行旧 `0.48 m` 粗移动。
 
-当前资产的固定参考是 DataReplay 第 0 帧录制书本的 0.13/0.10 抓取点：`base_link=(0.9355794,-0.3037484,0.7538117) m`。运行时将当前书的同类抓取点与它做差，使底盘恢复到回放开始时的书—机器人相对位置；第 300 帧不参与底盘对位。
+当前资产的固定参考是 DataReplay 第 0 帧录制书本的 0.13/0.10 抓取点：`base_link=(0.9350956,-0.3075495,0.7521206) m`。参考同时绑定录制书本长轴、长短边尺寸和 HDF5 身份。运行时将当前书的同类抓取点与它做差，使底盘恢复到回放开始时的书—机器人相对位置；第 300 帧不参与底盘对位。
+
+当前修复只完成了本地代码和离线验证，尚未部署到 Wanda，也尚未执行新的真机抓取。
 
 运行前还需要满足：
 
