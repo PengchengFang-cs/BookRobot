@@ -61,6 +61,8 @@ class ReplayPickReferenceTests(unittest.TestCase):
                 h5_path=path,
                 asset_id="S1_TABLE_PICK_BOOK",
                 reference_frame_index=0,
+                contact_frame_index=3,
+                suction_roi_xywh=(10, 8, 10, 8),
                 source_intrinsics=CameraIntrinsics(10.0, 10.0, 10.0, 10.0),
                 source_size=(20, 20),
                 detect_recorded_book=lambda *_args: SimpleNamespace(
@@ -71,11 +73,27 @@ class ReplayPickReferenceTests(unittest.TestCase):
             )
 
         self.assertEqual(result.reference_frame_index, 0)
+        self.assertEqual(result.contact_frame_index, 3)
         self.assertEqual(result.asset_id, "S1_TABLE_PICK_BOOK")
         self.assertEqual(len(result.hdf5_sha256), 64)
         np.testing.assert_allclose(
-            result.recorded_book_suction_point_base_m,
+            result.recorded_book_rule_point_base_m,
             (0.35, 0.25, 1.0),
+            atol=1e-12,
+        )
+        np.testing.assert_allclose(
+            result.recorded_contact_point_base_m,
+            (0.3, 0.15, 1.0),
+            atol=1e-12,
+        )
+        np.testing.assert_allclose(
+            result.recorded_book_suction_point_base_m,
+            (0.35, 0.15, 1.0),
+            atol=1e-12,
+        )
+        np.testing.assert_allclose(
+            result.recorded_contact_pixel,
+            (13.0, 11.5),
             atol=1e-12,
         )
         np.testing.assert_allclose(
@@ -206,7 +224,11 @@ class ReplayPickReferenceTests(unittest.TestCase):
         reference = ReplayPickReference(
             asset_id="S1_TABLE_PICK_BOOK",
             reference_frame_index=0,
-            recorded_book_suction_point_base_m=(0.935, -0.304, 0.754),
+            contact_frame_index=158,
+            recorded_book_rule_point_base_m=(0.935, -0.304, 0.754),
+            recorded_contact_point_base_m=(0.68, -0.281, 0.754),
+            recorded_contact_pixel=(118.5, 177.0),
+            recorded_book_suction_point_base_m=(0.935, -0.281, 0.754),
             recorded_book_long_axis_base=(1.0, 0.0, 0.0),
             recorded_book_long_extent_m=0.30,
             recorded_book_short_extent_m=0.20,

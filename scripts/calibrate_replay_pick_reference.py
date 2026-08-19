@@ -47,6 +47,13 @@ def arguments(argv=None):
     parser.add_argument("--h5", required=True, help="read-only DataReplay HDF5")
     parser.add_argument("--asset-id", default="S1_TABLE_PICK_BOOK")
     parser.add_argument("--reference-frame", type=int, default=0)
+    parser.add_argument("--contact-frame", type=int, default=158)
+    parser.add_argument(
+        "--suction-roi",
+        type=lambda value: _csv_ints(value, count=4),
+        default=(80, 80, 100, 144),
+        metavar="X,Y,W,H",
+    )
     parser.add_argument(
         "--output",
         default=str(ROOT / "config" / "stage1_pick_reference.json"),
@@ -85,10 +92,22 @@ def _write_overlay(h5_path, reference, output_path):
 
     with h5py.File(h5_path, "r") as recording:
         images = recording["observation/image"]
-        overlay = np.asarray(images[reference.reference_frame_index])[:, :, ::-1].copy()
+        overlay = np.asarray(images[reference.contact_frame_index])[:, :, ::-1].copy()
+    contact_u, contact_v = reference.recorded_contact_pixel
+    cv2.circle(
+        overlay,
+        (int(round(contact_u)), int(round(contact_v))),
+        5,
+        (0, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
     cv2.putText(
         overlay,
-        f"DataReplay reference frame {reference.reference_frame_index}",
+        (
+            f"rule f{reference.reference_frame_index} + "
+            f"contact-Y f{reference.contact_frame_index}"
+        ),
         (5, 18),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
@@ -121,6 +140,8 @@ def main(argv=None):
             h5_path=args.h5,
             asset_id=args.asset_id,
             reference_frame_index=args.reference_frame,
+            contact_frame_index=args.contact_frame,
+            suction_roi_xywh=args.suction_roi,
             source_intrinsics=SOURCE_INTRINSICS,
             source_size=SOURCE_SIZE,
             detect_recorded_book=_detector(client),

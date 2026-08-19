@@ -22,6 +22,10 @@ class ProjectedReplayContact:
 class ReplayPickReference:
     asset_id: str
     reference_frame_index: int
+    contact_frame_index: int
+    recorded_book_rule_point_base_m: tuple[float, float, float]
+    recorded_contact_point_base_m: tuple[float, float, float]
+    recorded_contact_pixel: tuple[float, float]
     recorded_book_suction_point_base_m: tuple[float, float, float]
     recorded_book_long_axis_base: tuple[float, float, float]
     recorded_book_long_extent_m: float
@@ -284,6 +288,8 @@ def calibrate_replay_pick_reference(
     h5_path,
     asset_id,
     reference_frame_index,
+    contact_frame_index,
+    suction_roi_xywh,
     source_intrinsics,
     source_size,
     detect_recorded_book,
@@ -294,6 +300,7 @@ def calibrate_replay_pick_reference(
     import h5py
 
     frame_index = int(reference_frame_index)
+    contact_index = int(contact_frame_index)
     with h5py.File(h5_path, "r") as recording:
         images = recording["observation/image"]
         depths = recording["observations/depth_head_rgbd"]
@@ -304,6 +311,10 @@ def calibrate_replay_pick_reference(
             source_size=source_size,
             target_size=(int(images.shape[2]), int(images.shape[1])),
         )
+        if not (0 <= frame_index < len(images)) or not (
+            0 <= contact_index < len(images)
+        ):
+            raise ValueError("recorded_frame_index_invalid")
         detected_book = detect_recorded_book(
             images[frame_index],
             depths[frame_index],
@@ -315,12 +326,50 @@ def calibrate_replay_pick_reference(
             ),
         )
         geometry = detected_book.geometry
-        point = tuple(float(value) for value in geometry.suction_point)
-        if len(point) != 3 or not all(math.isfinite(value) for value in point):
+        rule_point = tuple(float(value) for value in geometry.suction_point)
+        if len(rule_point) != 3 or not all(
+            math.isfinite(value) for value in rule_point
+        ):
             raise ValueError("recorded_book_suction_point_invalid")
         long_axis = tuple(float(value) for value in geometry.long_axis)
         if len(long_axis) != 3 or not all(math.isfinite(value) for value in long_axis):
             raise ValueError("recorded_book_long_axis_invalid")
+        contact_book = detect_recorded_book(
+            images[contact_index],
+            depths[contact_index],
+            intrinsics,
+            float(torsos[contact_index, 0]),
+            (
+                float(heads[contact_index, 0]),
+                float(heads[contact_index, 1]),
+            ),
+        )
+        observation = contact_book.observation
+        contact_mask = decode_bbox_rle(
+            image_shape=(int(images.shape[1]), int(images.shape[2])),
+            bbox=observation.bbox,
+            counts=observation.rle_counts,
+        )
+        contact_pixel = find_blue_book_contact_pixel(
+            baseline_rgb=images[frame_index],
+            contact_rgb=images[contact_index],
+            roi_xywh=suction_roi_xywh,
+            book_mask=contact_mask,
+        )
+        contact_point = project_recorded_contact_to_cover(
+            center_px=contact_pixel,
+            intrinsics=intrinsics,
+            torso_head_states=[
+                (
+                    float(torsos[contact_index, 0]),
+                    float(heads[contact_index, 0]),
+                    float(heads[contact_index, 1]),
+                )
+            ],
+            cover_z_base_m=rule_point[2],
+            camera_to_base=camera_to_base,
+        ).reference_contact_base_m
+        point = (rule_point[0], contact_point[1], rule_point[2])
     digest = hashlib.sha256()
     with Path(h5_path).open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -328,6 +377,10 @@ def calibrate_replay_pick_reference(
     return ReplayPickReference(
         asset_id=str(asset_id),
         reference_frame_index=frame_index,
+        contact_frame_index=contact_index,
+        recorded_book_rule_point_base_m=rule_point,
+        recorded_contact_point_base_m=contact_point,
+        recorded_contact_pixel=tuple(float(value) for value in contact_pixel),
         recorded_book_suction_point_base_m=point,
         recorded_book_long_axis_base=long_axis,
         recorded_book_long_extent_m=float(geometry.long_extent_m),
@@ -351,6 +404,16 @@ def load_replay_pick_reference(path):
     return ReplayPickReference(
         asset_id=str(payload["asset_id"]),
         reference_frame_index=int(payload["reference_frame_index"]),
+        contact_frame_index=int(payload["contact_frame_index"]),
+        recorded_book_rule_point_base_m=tuple(
+            float(value) for value in payload["recorded_book_rule_point_base_m"]
+        ),
+        recorded_contact_point_base_m=tuple(
+            float(value) for value in payload["recorded_contact_point_base_m"]
+        ),
+        recorded_contact_pixel=tuple(
+            float(value) for value in payload["recorded_contact_pixel"]
+        ),
         recorded_book_suction_point_base_m=tuple(
             float(value)
             for value in payload["recorded_book_suction_point_base_m"]
