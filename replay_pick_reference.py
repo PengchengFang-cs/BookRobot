@@ -148,6 +148,20 @@ def find_blue_suction_center(*, baseline_rgb, contact_rgb, roi_xywh):
     return (float(np.mean(columns)), float(np.mean(rows)))
 
 
+def find_blue_suction_contact_tip(*, baseline_rgb, contact_rgb, roi_xywh):
+    """Return the midpoint of the blue suction's farthest image-row edge."""
+
+    component = _largest_new_blue_component(
+        baseline_rgb=baseline_rgb,
+        contact_rgb=contact_rgb,
+        roi_xywh=roi_xywh,
+    )
+    rows, columns = np.nonzero(component)
+    tip_row = int(np.min(rows))
+    tip_columns = columns[rows == tip_row]
+    return (float(np.median(tip_columns)), float(tip_row))
+
+
 def find_blue_book_contact_pixel(
     *, baseline_rgb, contact_rgb, roi_xywh, book_mask
 ):
@@ -315,7 +329,7 @@ def calibrate_replay_pick_reference(
             0 <= contact_index < len(images)
         ):
             raise ValueError("recorded_frame_index_invalid")
-        detected_book = detect_recorded_book(
+        detected_books = detect_recorded_book(
             images[frame_index],
             depths[frame_index],
             intrinsics,
@@ -325,50 +339,56 @@ def calibrate_replay_pick_reference(
                 float(heads[frame_index, 1]),
             ),
         )
-        geometry = detected_book.geometry
-        rule_point = tuple(float(value) for value in geometry.suction_point)
-        if len(rule_point) != 3 or not all(
-            math.isfinite(value) for value in rule_point
-        ):
-            raise ValueError("recorded_book_suction_point_invalid")
-        long_axis = tuple(float(value) for value in geometry.long_axis)
-        if len(long_axis) != 3 or not all(math.isfinite(value) for value in long_axis):
-            raise ValueError("recorded_book_long_axis_invalid")
-        contact_book = detect_recorded_book(
-            images[contact_index],
-            depths[contact_index],
-            intrinsics,
-            float(torsos[contact_index, 0]),
-            (
-                float(heads[contact_index, 0]),
-                float(heads[contact_index, 1]),
-            ),
-        )
-        observation = contact_book.observation
-        contact_mask = decode_bbox_rle(
-            image_shape=(int(images.shape[1]), int(images.shape[2])),
-            bbox=observation.bbox,
-            counts=observation.rle_counts,
-        )
-        contact_pixel = find_blue_book_contact_pixel(
+        if hasattr(detected_books, "geometry"):
+            detected_books = (detected_books,)
+        else:
+            detected_books = tuple(detected_books)
+        if not detected_books:
+            raise ValueError("recorded_book_not_detected")
+        contact_pixel = find_blue_suction_contact_tip(
             baseline_rgb=images[frame_index],
             contact_rgb=images[contact_index],
             roi_xywh=suction_roi_xywh,
-            book_mask=contact_mask,
         )
-        contact_point = project_recorded_contact_to_cover(
-            center_px=contact_pixel,
-            intrinsics=intrinsics,
-            torso_head_states=[
+        contact_state = (
+            float(torsos[contact_index, 0]),
+            float(heads[contact_index, 0]),
+            float(heads[contact_index, 1]),
+        )
+        candidates = []
+        for detected_book in detected_books:
+            candidate_geometry = detected_book.geometry
+            candidate_rule = tuple(
+                float(value) for value in candidate_geometry.suction_point
+            )
+            if len(candidate_rule) != 3 or not all(
+                math.isfinite(value) for value in candidate_rule
+            ):
+                continue
+            candidate_contact = project_recorded_contact_to_cover(
+                center_px=contact_pixel,
+                intrinsics=intrinsics,
+                torso_head_states=[contact_state],
+                cover_z_base_m=candidate_rule[2],
+                camera_to_base=camera_to_base,
+            ).reference_contact_base_m
+            candidates.append(
                 (
-                    float(torsos[contact_index, 0]),
-                    float(heads[contact_index, 0]),
-                    float(heads[contact_index, 1]),
+                    abs(candidate_rule[1] - candidate_contact[1]),
+                    detected_book,
+                    candidate_rule,
+                    candidate_contact,
                 )
-            ],
-            cover_z_base_m=rule_point[2],
-            camera_to_base=camera_to_base,
-        ).reference_contact_base_m
+            )
+        if not candidates:
+            raise ValueError("recorded_book_suction_point_invalid")
+        _, detected_book, rule_point, contact_point = min(
+            candidates, key=lambda candidate: candidate[0]
+        )
+        geometry = detected_book.geometry
+        long_axis = tuple(float(value) for value in geometry.long_axis)
+        if len(long_axis) != 3 or not all(math.isfinite(value) for value in long_axis):
+            raise ValueError("recorded_book_long_axis_invalid")
         point = (rule_point[0], contact_point[1], rule_point[2])
     digest = hashlib.sha256()
     with Path(h5_path).open("rb") as stream:

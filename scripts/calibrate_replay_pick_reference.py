@@ -82,7 +82,7 @@ def _detector(client):
         )
         if not books:
             raise RuntimeError("recorded_book_not_detected")
-        return books[0]
+        return books
 
     return detect
 

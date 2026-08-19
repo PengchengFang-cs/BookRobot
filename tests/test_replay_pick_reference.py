@@ -11,6 +11,7 @@ from replay_pick_reference import (
     ReplayPickReference,
     calibrate_replay_pick_reference,
     find_blue_book_contact_pixel,
+    find_blue_suction_contact_tip,
     find_blue_suction_center,
     load_replay_pick_reference,
     project_recorded_contact,
@@ -65,9 +66,11 @@ class ReplayPickReferenceTests(unittest.TestCase):
                 suction_roi_xywh=(10, 8, 10, 8),
                 source_intrinsics=CameraIntrinsics(10.0, 10.0, 10.0, 10.0),
                 source_size=(20, 20),
-                detect_recorded_book=lambda *_args: SimpleNamespace(
-                    observation=observation,
-                    geometry=geometry,
+                detect_recorded_book=lambda *_args: (
+                    SimpleNamespace(
+                        observation=observation,
+                        geometry=geometry,
+                    ),
                 ),
                 camera_to_base=lambda point, *_state: point,
             )
@@ -83,17 +86,17 @@ class ReplayPickReferenceTests(unittest.TestCase):
         )
         np.testing.assert_allclose(
             result.recorded_contact_point_base_m,
-            (0.3, 0.15, 1.0),
+            (0.55, 0.0, 1.0),
             atol=1e-12,
         )
         np.testing.assert_allclose(
             result.recorded_book_suction_point_base_m,
-            (0.35, 0.15, 1.0),
+            (0.35, 0.0, 1.0),
             atol=1e-12,
         )
         np.testing.assert_allclose(
             result.recorded_contact_pixel,
-            (13.0, 11.5),
+            (15.5, 10.0),
             atol=1e-12,
         )
         np.testing.assert_allclose(
@@ -135,6 +138,20 @@ class ReplayPickReferenceTests(unittest.TestCase):
         )
 
         self.assertEqual(center, (39.5, 24.5))
+
+    def test_finds_robot_side_blue_tip_at_component_top_edge(self):
+        baseline = np.zeros((40, 60, 3), dtype=np.uint8)
+        contact = baseline.copy()
+        contact[10:20, 30:36] = (0, 0, 255)
+        contact[10, 29] = (0, 0, 255)
+
+        tip = find_blue_suction_contact_tip(
+            baseline_rgb=baseline,
+            contact_rgb=contact,
+            roi_xywh=(20, 5, 30, 25),
+        )
+
+        self.assertEqual(tip, (32.0, 10.0))
 
     def test_finds_book_surface_point_nearest_blue_suction_tip(self):
         baseline = np.zeros((20, 20, 3), dtype=np.uint8)
