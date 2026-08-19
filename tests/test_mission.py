@@ -69,7 +69,7 @@ class _PickReplayer:
     def pick(self, offset):
         self.offsets.append(offset)
         return SimpleNamespace(
-            frames_sent=607,
+            frames_sent=333,
             z_offset_m=offset,
             torso_target_m=0.212,
             torso_actual_m=0.211,
@@ -105,6 +105,10 @@ def _reference():
     return ReplayPickReference(
         asset_id="S1_TABLE_PICK_BOOK",
         reference_frame_index=0,
+        contact_frame_index=158,
+        recorded_book_rule_point_base_m=(0.715, -0.391, 0.713),
+        recorded_contact_point_base_m=(0.61, -0.391, 0.713),
+        recorded_contact_pixel=(146.5, 183.0),
         recorded_book_suction_point_base_m=(0.715, -0.391, 0.713),
         recorded_book_long_axis_base=(1.0, 0.0, 0.0),
         recorded_book_long_extent_m=0.30,
@@ -204,7 +208,7 @@ class BookAlignmentMissionTests(unittest.TestCase):
         )
 
         self.assertEqual(replayer.offsets, [result.alignment.final.z_offset_m])
-        self.assertEqual(result.replay.frames_sent, 607)
+        self.assertEqual(result.replay.frames_sent, 333)
         self.assertTrue(result.replay.d01_holding)
 
     def test_pick_defaults_to_current_position_without_coarse_alignment(self):

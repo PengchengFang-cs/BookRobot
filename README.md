@@ -42,23 +42,28 @@ Stage 1 默认不执行 `0.48 m` 粗定位；它只在用户已经把机器人�
 ```text
 当前 RGB-D 找到并锁定目标书
   -> 读取 config/stage1_pick_reference.json
-  -> 当前书的 13 cm / 10 cm 点减去第 0 帧录制书本点
+  -> 当前书的 13 cm / 10 cm 点减去录制混合参考
+     （X/Z 取第 0 帧规则点，Y 取 frame 158 实际接触点）
   -> X/Y 底盘恢复第 0 帧位置（X 允许 ±20 mm，Y 允许 ±10 mm）
   -> Z 平移整条 Pick torso 轨迹
   -> 从实时反馈平滑恢复第 0 帧双臂、头部和升降柱姿态，底盘保持零速
-  -> 完整发布原始 607 帧：底盘、双臂、头部、升降柱、左夹爪和右灵巧手
-  -> 发布第 300 帧后异步启动 D01 吸附，607 帧继续保持原时间戳节拍
+  -> 完整发布新 1.2 的原始 333 帧：底盘、双臂、头部、升降柱、左夹爪和右灵巧手
+  -> 发布第 20 帧后异步启动 D01 吸附，333 帧继续保持原时间戳节拍
 ```
 
 只有显式添加 `--book-coarse` 时，程序才先用 `0.48 m` 进入视觉工作范围，再通过 odom/IMU 重关联同一本书并执行上述第 0 帧精确对位。`--check` 不会默认运行，并与 `--book-pick` 互斥。
 
-参考 JSON 来自只读 Pick HDF5：直接对第 0 帧运行当前整书 mask、深度和
-13 cm/10 cm 抓取点算法，再变换到录制时的 `base_link`。标定命令只读取
-录制数据、调用书本视觉并生成 JSON/叠加图，不发送机器人运动命令：
+参考 JSON 来自只读 Pick HDF5：第 0 帧提供目标书的 13 cm/10 cm 规则点、
+尺寸和长轴；frame 158 的蓝色吸盘接触端提供实际左右 Y。由于新录制没有
+横移或旋转，接触 Y 可用于修正左右，而 X/Z 仍使用第 0 帧规则点。标定命令
+只读取录制数据、调用书本视觉并生成 JSON/叠加图，不发送机器人运动命令：
 
 ```bash
 python3 scripts/calibrate_replay_pick_reference.py \
-  --h5 /home/unix_ai/DataCollector/DataReplay_v3/v3_assets/takes/pi05_wanda_new1.2_20260816_034411.h5 \
+  --h5 /home/unix_ai/DataCollector/DataReplay_v3/v3_assets/takes/20260819_libraryrobot_datareplay/pi05_wanda_dr1.2_20260819_195231.h5 \
+  --reference-frame 0 \
+  --contact-frame 158 \
+  --suction-roi 80,80,100,144 \
   --output config/stage1_pick_reference.json \
   --overlay logs/stage1_pick_reference_overlay.jpg
 ```
@@ -67,9 +72,9 @@ python3 scripts/calibrate_replay_pick_reference.py \
 
 需要程序先做粗定位时，显式使用 `./run.sh --book-pick --book-coarse --book-align-mode vector`。不加 `--book-coarse` 就不会执行旧 `0.48 m` 粗移动。
 
-当前资产的固定参考是 DataReplay 第 0 帧录制书本的 0.13/0.10 抓取点：`base_link=(0.9350956,-0.3075495,0.7521206) m`。参考记录录制书本长轴、长短边尺寸和 HDF5 身份；运行时按用户要求不额外计算 SHA。程序将当前书的同类抓取点与参考做差，使底盘恢复到回放开始时的书—机器人相对位置；第 300 帧不参与底盘对位。
+当前新 `1.2` 的 frame 0 规则点为 `base_link=(0.8981937,-0.2520129,0.7568440) m`；frame 158 蓝色吸盘接触端为像素 `(146.5,183.0)`，投影 Y 为 `-0.2589220 m`。运行参考因此为 `base_link=(0.8981937,-0.2589220,0.7568440) m`。程序仍以当前书的 13/10 点做对位；只用接触帧校正录制资产的左右 Y，不把接触帧 X 当成起始位置。
 
-当前修复只完成了本地代码和离线验证，尚未部署到 Wanda，也尚未执行新的真机抓取。
+当前切换已完成离线验证；部署操作本身不会启动 Pick，新的真机抓取仍需单独执行。
 
 运行前还需要满足：
 

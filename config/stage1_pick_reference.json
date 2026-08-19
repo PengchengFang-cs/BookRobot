@@ -1,17 +1,32 @@
 {
   "asset_id": "S1_TABLE_PICK_BOOK",
-  "hdf5_sha256": "3fcb24599ffce157ffd9d0d9162e95b0ae7b742f43bb8db24d1a14b140a3186f",
+  "contact_frame_index": 158,
+  "hdf5_sha256": "8ee978fb9e19cc1066771e60ebb8fc99f078e4fe707c4cb84658077bffc2887d",
   "recorded_book_long_axis_base": [
-    0.9990367339494446,
-    -0.043881707118419266,
+    0.997937022318918,
+    0.0642004632791009,
     0.0
   ],
-  "recorded_book_long_extent_m": 0.2576602257578278,
-  "recorded_book_short_extent_m": 0.17403642654229162,
+  "recorded_book_long_extent_m": 0.2575353028199218,
+  "recorded_book_rule_point_base_m": [
+    0.898193718576426,
+    -0.25201286399567363,
+    0.7568439888931426
+  ],
+  "recorded_book_short_extent_m": 0.17317790107667083,
   "recorded_book_suction_point_base_m": [
-    0.935095556544132,
-    -0.3075494991071792,
-    0.7521206173913717
+    0.898193718576426,
+    -0.25892201012545313,
+    0.7568439888931426
+  ],
+  "recorded_contact_pixel": [
+    146.5,
+    183.0
+  ],
+  "recorded_contact_point_base_m": [
+    0.7483123199328534,
+    -0.25892201012545313,
+    0.7568439888931426
   ],
   "reference_frame_index": 0
 }
