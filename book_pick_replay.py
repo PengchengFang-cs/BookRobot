@@ -20,7 +20,13 @@ TORSO_MAX_M = 0.3
 V3_ROOT = Path("/home/unix_ai/WHRC")
 V3_CONFIG_PATH = V3_ROOT / "v3_pipeline/config/v3_robot_stage1.json"
 PICK_ASSET_ID = "S1_TABLE_PICK_BOOK"
-PICK_FRAME_COUNT = 607
+PICK_ASSET_PATH = Path(
+    "/home/unix_ai/DataCollector/DataReplay_v3/v3_assets/takes/"
+    "20260819_libraryrobot_datareplay/"
+    "pi05_wanda_dr1.2_20260819_195231.h5"
+)
+PICK_FRAME_COUNT = 333
+PICK_D01_FRAME_INDEX = 20
 EXACT_ACTION_SHAPES = {
     "target_qpos_arms": (16,),
     "target_qpos_head": (2,),
@@ -202,6 +208,14 @@ class LegacyV3PickRuntime:
         self.joint_positions = joint_positions
         self.spin_feedback = spin_feedback or (lambda: None)
         self.entry = dict(replay_adapter.assets[PICK_ASSET_ID])
+        self.entry["file"] = str(PICK_ASSET_PATH)
+        self.entry["version"] = "stage1-dr1.2-20260819"
+        self.entry["d01_events"] = [
+            {
+                "frame_index": PICK_D01_FRAME_INDEX,
+                "command": "right_suction_start",
+            }
+        ]
         self.entry["allow_base_motion"] = True
         required = list(self.entry.get("required_action_channels", ()))
         for channel in EXACT_ACTION_SHAPES:

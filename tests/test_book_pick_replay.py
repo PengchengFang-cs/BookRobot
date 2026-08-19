@@ -121,22 +121,23 @@ class FrameZeroPostureTests(unittest.TestCase):
 class RealPickAssetContractTests(unittest.TestCase):
     ASSET = Path(
         "/home/unix_ai/DataCollector/DataReplay_v3/v3_assets/takes/"
-        "pi05_wanda_new1.2_20260816_034411.h5"
+        "20260819_libraryrobot_datareplay/"
+        "pi05_wanda_dr1.2_20260819_195231.h5"
     )
 
     @unittest.skipUnless(ASSET.is_file(), "read-only robot Pick asset unavailable")
-    def test_real_pick_has_all_607_recorded_control_channels(self):
+    def test_real_pick_has_all_333_recorded_control_channels(self):
         import h5py
 
         with h5py.File(self.ASSET, "r") as handle:
             actions = handle["observations"]
             expected = {
-                "target_qpos_arms": (607, 16),
-                "target_qpos_head": (607, 2),
-                "target_qpos_torso": (607, 1),
-                "target_base_vel": (607, 2),
-                "target_qpos_left_gripper": (607, 1),
-                "target_qpos_right_dexhand": (607, 2),
+                "target_qpos_arms": (333, 16),
+                "target_qpos_head": (333, 2),
+                "target_qpos_torso": (333, 1),
+                "target_base_vel": (333, 2),
+                "target_qpos_left_gripper": (333, 1),
+                "target_qpos_right_dexhand": (333, 2),
             }
             for channel, shape in expected.items():
                 self.assertEqual(actions[channel].shape, shape)
@@ -439,7 +440,7 @@ class _RecordedNode:
 
 
 class LegacyV3PickRuntimeTests(unittest.TestCase):
-    def _runtime(self, frame_count=607, reported_frames=None):
+    def _runtime(self, frame_count=333, reported_frames=None):
         episode = _episode([0.212] * frame_count)
         replay_adapter = _ReplayAdapter(episode, reported_frames=reported_frames)
         context = SimpleNamespace(load_state=SimpleNamespace(value="EMPTY_READY"))
@@ -502,28 +503,34 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
         )
         self.assertNotIn("sudo", [part for command in commands for part in command])
 
-    def test_rejects_pick_asset_that_is_not_exactly_607_frames(self):
-        runtime, _replay, _nav, _episode_value = self._runtime(frame_count=606)
+    def test_rejects_pick_asset_that_is_not_exactly_333_frames(self):
+        runtime, _replay, _nav, _episode_value = self._runtime(frame_count=332)
 
-        with self.assertRaisesRegex(RuntimeError, "607"):
+        with self.assertRaisesRegex(RuntimeError, "333"):
             runtime.load_episode()
 
-    def test_replays_pick_with_recorded_base_enabled_and_frame_300_d01_event(self):
+    def test_replays_new_pick_with_recorded_base_and_frame_20_d01_event(self):
         runtime, replay, _nav, episode = self._runtime()
         runtime.load_episode()
 
         evidence = runtime.replay_pick(episode)
 
-        self.assertEqual(evidence.frames_sent, 607)
+        self.assertEqual(evidence.frames_sent, 333)
         self.assertEqual(len(replay.run_calls), 1)
         sent_episode, entry, asset_id, _context, before = replay.run_calls[0]
         self.assertIs(sent_episode, episode)
         self.assertEqual(asset_id, "S1_TABLE_PICK_BOOK")
+        self.assertEqual(
+            entry["file"],
+            "/home/unix_ai/DataCollector/DataReplay_v3/v3_assets/takes/"
+            "20260819_libraryrobot_datareplay/"
+            "pi05_wanda_dr1.2_20260819_195231.h5",
+        )
         self.assertTrue(entry["allow_base_motion"])
         self.assertIn("target_base_vel", entry["required_action_channels"])
         self.assertEqual(
             entry["d01_events"],
-            [{"frame_index": 300, "command": "right_suction_start"}],
+            [{"frame_index": 20, "command": "right_suction_start"}],
         )
         self.assertEqual(before, 0)
         self.assertEqual(replay.navigation_starts, 0)
@@ -599,7 +606,7 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
         self.assertTrue(all(event[2] == (0.0, 0.0) for event in events[:-1]))
         self.assertEqual(
             events[-1][1],
-            [{"frame_index": 300, "command": "right_suction_start"}],
+            [{"frame_index": 20, "command": "right_suction_start"}],
         )
 
     def test_recorded_frame_is_published_before_its_d01_event_without_delay(self):
@@ -677,10 +684,10 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
 
     def test_rejects_missing_or_malformed_exact_replay_channels(self):
         for channel, shape in (
-            ("target_qpos_arms", (607, 15)),
-            ("target_qpos_head", (607, 1)),
-            ("target_qpos_torso", (607, 2)),
-            ("target_base_vel", (607, 1)),
+            ("target_qpos_arms", (333, 15)),
+            ("target_qpos_head", (333, 1)),
+            ("target_qpos_torso", (333, 2)),
+            ("target_base_vel", (333, 1)),
         ):
             with self.subTest(channel=channel):
                 runtime, _replay, _nav, episode = self._runtime()
@@ -696,11 +703,11 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
         self.assertTrue(runtime.entry["allow_base_motion"])
         self.assertIn("target_base_vel", runtime.entry["required_action_channels"])
 
-    def test_rejects_success_result_that_did_not_publish_all_607_frames(self):
-        runtime, _replay, _nav, episode = self._runtime(reported_frames=606)
+    def test_rejects_success_result_that_did_not_publish_all_333_frames(self):
+        runtime, _replay, _nav, episode = self._runtime(reported_frames=332)
         runtime.load_episode()
 
-        with self.assertRaisesRegex(RuntimeError, "607"):
+        with self.assertRaisesRegex(RuntimeError, "333"):
             runtime.replay_pick(episode)
 
     def test_confirms_pick_check_and_closes_command_stream(self):
