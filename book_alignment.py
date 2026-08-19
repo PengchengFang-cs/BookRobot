@@ -50,7 +50,7 @@ def _book_matches_reference(book, replay_reference):
     dot = (
         axis[0] * reference_axis[0] + axis[1] * reference_axis[1]
     ) / (axis_xy * reference_xy)
-    yaw_error = math.acos(max(-1.0, min(1.0, dot)))
+    yaw_error = math.acos(max(0.0, min(1.0, abs(dot))))
     return (
         yaw_error <= BOOK_LONG_AXIS_TOLERANCE_RAD
         and abs(

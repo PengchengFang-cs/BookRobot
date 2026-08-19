@@ -82,7 +82,7 @@ class MainArgumentTests(unittest.TestCase):
             text,
         )
         self.assertIn(
-            "spin_feedback=lambda: rclpy.spin_once(node, timeout_sec=0.0)",
+            "spin_feedback=lambda: rclpy.spin_once(node, timeout_sec=0.05)",
             text,
         )
 

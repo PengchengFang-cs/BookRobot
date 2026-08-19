@@ -169,6 +169,19 @@ class BookAlignmentTests(unittest.TestCase):
                 replay_reference=_reference(),
             )
 
+    def test_reassociation_treats_a_pca_long_axis_as_undirected(self):
+        same_book_flipped_axis = _book(
+            (0.71, -0.39, 0.72), long_axis=(-1.0, 0.0, 0.0)
+        )
+
+        selected = reassociate_book(
+            [same_book_flipped_axis],
+            predicted_point_m=(0.71, -0.39, 0.72),
+            replay_reference=_reference(),
+        )
+
+        self.assertIs(selected, same_book_flipped_axis)
+
 
 if __name__ == "__main__":
     unittest.main()

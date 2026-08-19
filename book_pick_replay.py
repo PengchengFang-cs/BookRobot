@@ -7,6 +7,7 @@ from numbers import Real
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 from types import SimpleNamespace
 import uuid
@@ -36,6 +37,7 @@ CONTROLLER_DISCOVERY_TIMEOUT_S = 5.0
 FRAME_ZERO_ARM_TOLERANCE_RAD = 0.03
 FRAME_ZERO_HEAD_TOLERANCE_RAD = 0.02
 FRAME_ZERO_TORSO_TOLERANCE_M = 0.005
+FRAME_ZERO_SETTLE_SAMPLES = 60
 
 
 def _joint_vector(joints, names):
@@ -209,6 +211,7 @@ class LegacyV3PickRuntime:
         self.module = None
         self._closed = False
         self._d01_state = "unattached"
+        self.frame_zero_torso_actual_m = None
 
     @property
     def d01_state(self):
@@ -353,11 +356,26 @@ class LegacyV3PickRuntime:
         finally:
             node.episode = original_episode
 
-        self.spin_feedback()
-        arm_error, head_error, torso_error = self._feedback_error(
-            self.joint_positions(), episode
-        )
-        if (
+        final_joints = None
+        arm_error = head_error = torso_error = math.inf
+        for _attempt in range(FRAME_ZERO_SETTLE_SAMPLES):
+            if self.monotonic_clock() >= deadline:
+                break
+            self.spin_feedback()
+            final_joints = self.joint_positions()
+            arm_error, head_error, torso_error = self._feedback_error(
+                final_joints, episode
+            )
+            if (
+                arm_error <= FRAME_ZERO_ARM_TOLERANCE_RAD
+                and head_error <= FRAME_ZERO_HEAD_TOLERANCE_RAD
+                and torso_error <= FRAME_ZERO_TORSO_TOLERANCE_M
+            ):
+                break
+            self.wait_function(PREROLL_PERIOD_S)
+        else:
+            final_joints = None
+        if final_joints is None or (
             arm_error > FRAME_ZERO_ARM_TOLERANCE_RAD
             or head_error > FRAME_ZERO_HEAD_TOLERANCE_RAD
             or torso_error > FRAME_ZERO_TORSO_TOLERANCE_M
@@ -367,6 +385,7 @@ class LegacyV3PickRuntime:
                 f"arms={arm_error:.4f} rad, head={head_error:.4f} rad, "
                 f"torso={torso_error:.4f} m"
             )
+        self.frame_zero_torso_actual_m = float(final_joints["body_joint"])
 
         return self._publish_recorded_frames(
             module,
@@ -396,14 +415,53 @@ class LegacyV3PickRuntime:
         timestamps = episode.timestamps
         speed = float(entry.get("speed", 1.0))
         pending = [dict(event) for event in entry["d01_events"]]
-        executed = set()
+        scheduled = set()
+        event_states = {}
+        event_lock = threading.Lock()
         origin = float(timestamps[0])
+
+        def run_event(index, event, started):
+            started.set()
+            try:
+                acknowledgement = adapter.delegate.execute_d01_event(
+                    event=event, context=context
+                )
+                data = getattr(acknowledgement, "data", {})
+                if (
+                    not _success(acknowledgement)
+                    or data.get("fresh_ack") is not True
+                    or data.get("fault") is not False
+                    or data.get("acknowledged_command") != event["command"]
+                ):
+                    state = "D01 event failed/faulted/stale"
+                else:
+                    state = "success"
+            except Exception as exc:
+                state = f"D01 callback exception: {exc}"
+            with event_lock:
+                event_states[index] = state
+
+        event_threads = {}
+
+        def fail_after_join(detail):
+            for worker in event_threads.values():
+                remaining = max(0.0, deadline - adapter._clock())
+                worker.join(timeout=remaining)
+            return fail(detail)
+
         for frame in range(int(episode.num_frames)):
             frame_started = adapter._clock()
             if adapter._abort.is_set():
-                return fail("DataReplay aborted")
+                return fail_after_join("DataReplay aborted")
+            with event_lock:
+                failed_events = [
+                    state for state in event_states.values() if state != "success"
+                ]
+            if failed_events:
+                adapter._abort.set()
+                return fail_after_join(failed_events[0])
             if adapter._clock() >= deadline:
-                return fail("DataReplay timeout")
+                return fail_after_join("DataReplay timeout")
 
             relative = float(timestamps[frame]) - origin
             node._publish_frame(frame)
@@ -419,27 +477,23 @@ class LegacyV3PickRuntime:
                         and float(event["time_seconds"]) <= relative
                     )
                 )
-                if index in executed or not due:
+                if index in scheduled or not due:
                     continue
-                try:
-                    acknowledgement = adapter.delegate.execute_d01_event(
-                        event=event, context=context
-                    )
-                except Exception as exc:
-                    adapter._abort.set()
-                    return fail(f"D01 callback exception: {exc}")
-                data = getattr(acknowledgement, "data", {})
-                if (
-                    not _success(acknowledgement)
-                    or data.get("fresh_ack") is not True
-                    or data.get("fault") is not False
-                    or data.get("acknowledged_command") != event["command"]
-                ):
-                    adapter._abort.set()
-                    return fail("D01 event failed/faulted/stale")
                 if event["command"] == "right_suction_start":
                     self._d01_state = "holding_or_unknown"
-                executed.add(index)
+                scheduled.add(index)
+                started = threading.Event()
+                worker = threading.Thread(
+                    target=run_event,
+                    args=(index, event, started),
+                    name=f"fpc-d01-frame-event-{index}",
+                    daemon=True,
+                )
+                event_threads[index] = worker
+                worker.start()
+                if not started.wait(timeout=0.01):
+                    adapter._abort.set()
+                    return fail_after_join("D01 event thread did not start promptly")
 
             if frame + 1 < int(episode.num_frames):
                 interval = max(
@@ -450,10 +504,21 @@ class LegacyV3PickRuntime:
                     remaining, deadline, "frame pacing"
                 )
                 if wait_error:
-                    return fail(wait_error)
+                    return fail_after_join(wait_error)
 
-        if len(executed) != len(pending):
-            return fail("not all D01 events executed")
+        if len(scheduled) != len(pending):
+            return fail_after_join("not all D01 events executed")
+        for index, worker in event_threads.items():
+            remaining = max(0.0, deadline - adapter._clock())
+            worker.join(timeout=remaining)
+            if worker.is_alive():
+                adapter._abort.set()
+                return fail("D01 event did not finish before replay deadline")
+            with event_lock:
+                state = event_states.get(index)
+            if state != "success":
+                adapter._abort.set()
+                return fail(state or "D01 event returned no result")
         return result_class.success(
             "DataReplay episode published",
             frames_sent=adapter._frames_sent - before,
@@ -467,7 +532,27 @@ class LegacyV3PickRuntime:
             raise RuntimeError("Stage-1 Pick episode must be loaded before replay")
         before = int(self.replay_adapter.frames_sent)
         deadline = self.monotonic_clock() + float(self.entry["timeout_seconds"])
+        delegate = self.replay_adapter.delegate
         original_publish = self.replay_adapter._publish_frames
+        original_tracker = getattr(delegate, "track_replay_completion", None)
+        result_class = self.replay_adapter.__class__._publish_frames.__globals__.get(
+            "BlockResult"
+        )
+        if result_class is None:
+            result_class = getattr(self.replay_adapter, "_fpc_block_result", None)
+        if result_class is None:
+            raise RuntimeError("DataReplay result contract is unavailable")
+
+        def completion_tracker(*, done_event, context):
+            while not done_event.wait(0.05):
+                if self.monotonic_clock() >= deadline:
+                    return result_class.fail(
+                        "FPC replay completion tracker timed out"
+                    )
+            return result_class.success(
+                "FPC tracked raw replay completion without moving the base",
+                navigation_event=None,
+            )
 
         def exact_publish(module, node, replay_episode, entry, context, end, start):
             return self._publish_exact_frames(
@@ -481,6 +566,7 @@ class LegacyV3PickRuntime:
             )
 
         self.replay_adapter._publish_frames = exact_publish
+        delegate.track_replay_completion = completion_tracker
         try:
             result = self.replay_adapter._run_episode(
                 self.module,
@@ -493,6 +579,10 @@ class LegacyV3PickRuntime:
             )
         finally:
             self.replay_adapter._publish_frames = original_publish
+            if original_tracker is None:
+                delattr(delegate, "track_replay_completion")
+            else:
+                delegate.track_replay_completion = original_tracker
         if not _success(result):
             raise RuntimeError(
                 "Stage-1 Pick DataReplay failed: "
@@ -595,9 +685,9 @@ class Stage1BookPickReplayer:
             episode = self.runtime.load_episode()
             shifted = shift_pick_episode_torso(episode, offset)
             torso_target = float(shifted.actions["target_qpos_torso"][0, 0])
-            torso_actual = float(self.runtime.preposition_frame_zero(shifted))
             replay_started = True
             replay = self.runtime.replay_pick(shifted)
+            torso_actual = float(self.runtime.frame_zero_torso_actual_m)
             holding = bool(self.runtime.confirm_holding())
             if not holding:
                 raise RuntimeError("DataReplay 已完成，但右吸盘没有吸住书本")

@@ -11,13 +11,13 @@ Stage 1 已从“FruitTest 固定距离 + 被裁剪的 DataReplay”改为“按
 - `/home/cvailab/fpc` 是权威开发仓库；Wanda 的 `/home/unix_ai/fpc` 是普通运行副本。部署由 5090 的 `scripts/deploy_to_robot.sh` 直接完成，GitHub 只作备份。
 - 视觉链路为 Wanda RGB-D → 5090 Grounding DINO/SAM 二维 mask → Wanda 本地深度/姿态三维几何。候选置信度阈值为 `0.25`，最多返回置信度最高且几何有效的 5 本，不足 5 本返回实际数量。
 - 桌面书抓取点使用机器人视角下从长轴近端向内 `0.13 m`、从右边缘向左 `0.10 m` 的规则。
-- 当前 Pick 参考来自只读 HDF5 第 0 帧，点为 `base_link=(0.9350956,-0.3075495,0.7521206) m`，并绑定长轴、长短边尺寸、资产 ID 和 HDF5 SHA-256。OpenCV 缩放后的主点采用像素中心公式。
+- 当前 Pick 参考来自只读 HDF5 第 0 帧，点为 `base_link=(0.9350956,-0.3075495,0.7521206) m`，并记录长轴、长短边尺寸、资产 ID 和 HDF5 SHA-256；运行时按用户要求不额外计算 SHA。OpenCV 缩放后的主点采用像素中心公式。
 - 默认 `--book-pick` 不做 `0.48 m` 粗定位；只有显式 `--book-coarse` 才启用粗定位。`--check` 默认关闭，且不能与 `--book-pick` 同时使用。
 - 精确对位只驱动底盘 X/Y；Z 使用 `observed_z-reference_z` 平移整条 Pick torso 轨迹。最终回放门限为 X 前后 `±20 mm`、Y 左右 `±10 mm`；任一超差都不会启动 DataReplay。
 - 目标书重关联会检查预测位置、长短边尺寸和无向长轴角，不再无条件选择最近候选。
 - Pick HDF5 的 607 帧会完整保留：底盘速度、双臂、头部、升降柱、左夹爪和右灵巧手均按录制数据发布；底盘不再被 `allow_base_motion=false` 静默禁用。
 - 正式第 0 帧前，从实时关节反馈以有界小步平滑恢复双臂、头部和升降柱姿态；预置期间底盘命令固定为零，并在进入正式回放前核对最终反馈。
-- D01 的 `right_suction_start` 在录制第 300 帧发布后立即执行，再进入下一帧。异常清理不会对可能已经吸住或状态未知的书发送 suction stop。
+- D01 的 `right_suction_start` 在录制第 300 帧发布后由独立线程启动；等待 holding 不会阻塞第 301–606 帧的原始节拍。旧 navnav `START_TASK` 会额外校正绝对航向，因此这里使用不产生运动的本地 completion tracker；异常清理不会对可能已经吸住或状态未知的书发送 suction stop。
 
 ## 当前问题
 

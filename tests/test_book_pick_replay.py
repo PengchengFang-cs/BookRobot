@@ -153,19 +153,18 @@ class _Runtime:
         self.closed = False
         self.cleaned_up = False
         self.replayed_episode = None
+        self.frame_zero_torso_actual_m = None
 
     def load_episode(self):
         self.calls.append("load")
         return self.source
 
-    def preposition_frame_zero(self, episode):
-        target_m = float(episode.actions["target_qpos_torso"][0, 0])
-        self.calls.append(("preposition_frame_zero", target_m))
-        return target_m - 0.001
-
     def replay_pick(self, episode):
         self.calls.append("replay")
         self.replayed_episode = episode
+        self.frame_zero_torso_actual_m = (
+            float(episode.actions["target_qpos_torso"][0, 0]) - 0.001
+        )
         if self.fail_replay:
             raise RuntimeError("replay failed")
         return SimpleNamespace(frames_sent=episode.num_frames)
@@ -190,9 +189,7 @@ class Stage1BookPickReplayerTests(unittest.TestCase):
         result = Stage1BookPickReplayer(runtime=runtime).pick(0.012)
 
         self.assertEqual(runtime.calls[0], "load")
-        self.assertEqual(runtime.calls[1][0], "preposition_frame_zero")
-        self.assertAlmostEqual(runtime.calls[1][1], 0.212)
-        self.assertEqual(runtime.calls[2:], ["replay", "holding", "close"])
+        self.assertEqual(runtime.calls[1:], ["replay", "holding", "close"])
         self.assertEqual(result.frames_sent, 3)
         self.assertAlmostEqual(result.z_offset_m, 0.012)
         self.assertAlmostEqual(result.torso_target_m, 0.212)
@@ -250,12 +247,29 @@ class _ReplayAdapter:
             }
         }
         self.frames_sent = 0
+        self._fpc_block_result = _BlockResult
         self.run_calls = []
         self.closed = False
         self.d01_events = []
+        self.navigation_starts = 0
+        self.original_track_calls = 0
+        navigation = SimpleNamespace(start_task=self._start_navigation)
         self.delegate = SimpleNamespace(
             check=self._check,
             execute_d01_event=self._execute_d01_event,
+            _navigation=navigation,
+            _navigation_started=False,
+            track_replay_completion=self._track_replay_completion,
+        )
+
+    def _start_navigation(self):
+        self.navigation_starts += 1
+        return SimpleNamespace(event_type="TASK_STARTED")
+
+    def _track_replay_completion(self, *, done_event, context):
+        self.original_track_calls += 1
+        return SimpleNamespace(
+            status=_Status("SUCCESS"), data={"navigation_event": "legacy"}
         )
 
     def _load_module(self):
@@ -279,6 +293,12 @@ class _ReplayAdapter:
         self, _module, episode, entry, asset_id, context, _deadline, before
     ):
         self.run_calls.append((episode, entry, asset_id, context, before))
+        if entry["allow_base_motion"]:
+            done = threading.Event()
+            done.set()
+            self.track_result = self.delegate.track_replay_completion(
+                done_event=done, context=context
+            )
         frames = (
             episode.num_frames
             if self.reported_frames is None
@@ -379,16 +399,23 @@ class _BlockResult:
 
 
 class _ExactPublishAdapter:
-    def __init__(self, events):
+    def __init__(self, events, *, d01_started=None, release_d01=None):
         self._clock = lambda: 10.0
         self._abort = threading.Event()
         self._frames_sent = 0
         self._fpc_block_result = _BlockResult
         self.events = events
+        self.d01_started = d01_started
+        self.release_d01 = release_d01
         self.delegate = SimpleNamespace(execute_d01_event=self._d01)
 
     def _d01(self, *, event, context):
-        self.events.append(("d01", event["command"]))
+        self.events.append(("d01_start", event["command"]))
+        if self.d01_started is not None:
+            self.d01_started.set()
+        if self.release_d01 is not None:
+            self.release_d01.wait(timeout=1.0)
+        self.events.append(("d01_done", event["command"]))
         return SimpleNamespace(
             status=_Status("SUCCESS"),
             data={
@@ -490,6 +517,10 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
             [{"frame_index": 300, "command": "right_suction_start"}],
         )
         self.assertEqual(before, 0)
+        self.assertEqual(replay.navigation_starts, 0)
+        self.assertFalse(replay.delegate._navigation_started)
+        self.assertEqual(replay.original_track_calls, 0)
+        self.assertEqual(replay.track_result.status.value, "SUCCESS")
 
     def test_exact_publish_prepositions_all_frame_zero_joints_before_recording(self):
         runtime, _replay, _nav, episode = self._runtime()
@@ -497,6 +528,13 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
         episode.actions["target_qpos_arms"][0] = target_arms
         episode.actions["target_qpos_head"][0] = (0.02, 0.25)
         feedback = [
+            {
+                **{f"joint_la{i}": 0.0 for i in range(8)},
+                **{f"joint_ra{i}": 0.0 for i in range(8)},
+                "joint_head0": 0.0,
+                "joint_head1": 0.20,
+                "body_joint": 0.212,
+            },
             {
                 **{f"joint_la{i}": 0.0 for i in range(8)},
                 **{f"joint_ra{i}": 0.0 for i in range(8)},
@@ -580,13 +618,53 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
             events,
             [
                 ("publish", 0),
-                ("d01", "right_suction_start"),
+                ("d01_start", "right_suction_start"),
+                ("d01_done", "right_suction_start"),
                 ("publish", 1),
             ],
         )
         self.assertEqual(result.status.value, "SUCCESS")
         self.assertEqual(result.data["frames_sent"], 2)
         self.assertEqual(runtime.d01_state, "holding_or_unknown")
+
+    def test_d01_holding_wait_does_not_delay_the_next_recorded_frame(self):
+        runtime, _replay, _nav, _episode_value = self._runtime()
+        episode = _episode([0.20, 0.20])
+        events = []
+        started = threading.Event()
+        release = threading.Event()
+        adapter = _ExactPublishAdapter(
+            events, d01_started=started, release_d01=release
+        )
+        runtime.replay_adapter = adapter
+        node = _RecordedNode(episode, events)
+        module = SimpleNamespace(
+            rclpy=SimpleNamespace(spin_once=lambda *_args, **_kwargs: None)
+        )
+        entry = {
+            "speed": 1.0,
+            "d01_events": [
+                {"frame_index": 0, "command": "right_suction_start"}
+            ],
+        }
+        outcome = []
+        worker = threading.Thread(
+            target=lambda: outcome.append(
+                runtime._publish_recorded_frames(
+                    module, node, episode, entry, runtime.context, 20.0, 0
+                )
+            )
+        )
+        worker.start()
+        self.assertTrue(started.wait(timeout=0.5))
+        try:
+            self.assertIn(("publish", 1), events)
+            self.assertNotIn(("d01_done", "right_suction_start"), events)
+        finally:
+            release.set()
+            worker.join(timeout=1.0)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(outcome[0].status.value, "SUCCESS")
 
     def test_rejects_missing_or_malformed_exact_replay_channels(self):
         for channel, shape in (

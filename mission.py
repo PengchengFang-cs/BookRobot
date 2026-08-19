@@ -112,7 +112,7 @@ def run_book_alignment_once(vision, navigator, replay_reference, say=print):
         final=final,
         coarse_navigation=coarse_navigation,
         precise_navigation=precise_navigation,
-        z_offset_m=precise.z_offset_m,
+        z_offset_m=final.z_offset_m,
         xy_within_tolerance=xy_within_tolerance,
     )
 
@@ -167,7 +167,7 @@ def run_book_alignment_from_current_once(
         final=final,
         coarse_navigation=None,
         precise_navigation=precise_navigation,
-        z_offset_m=precise.z_offset_m,
+        z_offset_m=final.z_offset_m,
         xy_within_tolerance=xy_within_tolerance,
     )
 

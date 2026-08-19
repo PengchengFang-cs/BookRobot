@@ -145,7 +145,7 @@ class BookAlignmentMissionTests(unittest.TestCase):
         initial_other = _book((0.88, 0.25, 0.724))
         after_coarse_target = _book((0.70, -0.20, 0.723))
         replay_near_distractor = _book((0.715, -0.391, 0.723))
-        final_target = _book((0.716, -0.390, 0.723))
+        final_target = _book((0.716, -0.390, 0.725))
         final_other = _book((0.72, 0.05, 0.724))
         vision = _Vision(
             [
@@ -183,7 +183,8 @@ class BookAlignmentMissionTests(unittest.TestCase):
             navigator.calls[1][0],
             _reference().recorded_book_suction_point_base_m,
         )
-        self.assertAlmostEqual(result.z_offset_m, 0.010)
+        self.assertAlmostEqual(result.z_offset_m, result.final.z_offset_m)
+        self.assertAlmostEqual(result.z_offset_m, 0.012)
         self.assertTrue(result.xy_within_tolerance)
         self.assertTrue(any("0.48 m 粗定位" in message for message in messages))
         self.assertTrue(any("DataReplay 精确偏差" in message for message in messages))
@@ -299,6 +300,7 @@ class BookAlignmentMissionTests(unittest.TestCase):
         self.assertIs(result.final.book, final_target)
         self.assertIsNone(result.coarse)
         self.assertIsNone(result.coarse_navigation)
+        self.assertAlmostEqual(result.z_offset_m, result.final.z_offset_m)
 
     def test_pick_can_start_from_current_position_without_coarse_alignment(self):
         target = _book((0.785, -0.380, 0.723))
