@@ -1,3 +1,4 @@
+import math
 import unittest
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
@@ -13,6 +14,7 @@ class _Adapter:
         self.executed = []
         self.stopped = False
         self.origin_calls = 0
+        self.yaw_corrections = []
 
     def preflight(self):
         self.preflight_calls += 1
@@ -28,6 +30,13 @@ class _Adapter:
 
     def current_task_pose(self):
         return self.runtime.final_pose
+
+    def current_absolute_imu_yaw(self):
+        return self.runtime.absolute_yaw
+
+    def correct_absolute_imu_yaw(self, **kwargs):
+        self.yaw_corrections.append(kwargs)
+        return kwargs["target_yaw_rad"]
 
     def execute_command(self, command, *, precision_mode):
         self.executed.append((command, precision_mode))
@@ -48,6 +57,7 @@ class _Runtime:
         torso=0.20,
         torso_readings=(),
         final_pose=(0.01, -0.02, 0.003),
+        absolute_yaw=0.42,
     ):
         self.commands = commands
         self.torso = torso
@@ -57,6 +67,7 @@ class _Runtime:
         self.final_pose = SimpleNamespace(
             x=final_pose[0], y=final_pose[1], yaw=final_pose[2]
         )
+        self.absolute_yaw = absolute_yaw
 
     @staticmethod
     def MappedMotionCommand(kind, value, axis):
@@ -174,6 +185,20 @@ class BookNavigationTests(unittest.TestCase):
         commands = [row[0] for row in runtime.adapter.executed]
         self.assertEqual(commands[1].kind, runtime.WandaCommandKind.DRIVE_FORWARD)
         self.assertAlmostEqual(commands[1].value, (0.1**2 + 0.02**2) ** 0.5)
+
+    def test_vector_mode_restores_the_captured_absolute_imu_yaw(self):
+        runtime = _Runtime([], absolute_yaw=0.42)
+        navigator = BookAlignmentNavigator(runtime=runtime, mode="vector")
+
+        navigator.align(
+            reference=(0.9, -0.3, 0.75),
+            observed=(1.0, -0.28, 0.80),
+        )
+
+        self.assertEqual(len(runtime.adapter.yaw_corrections), 1)
+        correction = runtime.adapter.yaw_corrections[0]
+        self.assertAlmostEqual(correction["target_yaw_rad"], 0.42)
+        self.assertAlmostEqual(correction["tolerance_rad"], math.radians(0.15))
 
     def test_vector_mode_emits_no_commands_at_xy_target(self):
         runtime = _Runtime([])

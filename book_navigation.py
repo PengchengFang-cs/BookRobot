@@ -10,6 +10,9 @@ from types import SimpleNamespace
 
 NAVNAV_ROOT = Path("/home/unix_ai/navnav_final")
 NAVNAV_MODULE = "runtime.wanda_nav_whrc"
+VECTOR_FINAL_YAW_TOLERANCE_RAD = math.radians(0.15)
+
+
 @dataclass(frozen=True)
 class BookAlignmentExecution:
     command_count: int
@@ -90,6 +93,11 @@ class BookAlignmentNavigator:
         adapter = self.runtime.WandaRos2Adapter()
         try:
             adapter.preflight()
+            starting_absolute_yaw = (
+                adapter.current_absolute_imu_yaw()
+                if self.mode == "vector"
+                else None
+            )
             adapter.capture_task_origin()
             torso = adapter.current_torso_position()
             planned_observed = (
@@ -111,6 +119,11 @@ class BookAlignmentNavigator:
                 )
             for command in commands:
                 adapter.execute_command(command, precision_mode=True)
+            if self.mode == "vector" and commands:
+                adapter.correct_absolute_imu_yaw(
+                    target_yaw_rad=starting_absolute_yaw,
+                    tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
+                )
             pose = adapter.current_task_pose()
             return BookAlignmentExecution(
                 command_count=len(commands),
