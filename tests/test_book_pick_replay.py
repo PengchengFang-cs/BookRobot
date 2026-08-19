@@ -1,4 +1,6 @@
 import unittest
+import threading
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -8,7 +10,6 @@ from book_pick_replay import (
     LegacyV3PickRuntime,
     Stage1BookPickReplayer,
     build_frame_zero_preroll,
-    shift_frame_events_after_publish,
     shift_pick_episode_torso,
 )
 
@@ -116,16 +117,32 @@ class FrameZeroPostureTests(unittest.TestCase):
         )
         self.assertTrue(np.all(preroll.actions["target_base_vel"] == 0.0))
 
-    def test_d01_frame_event_is_shifted_until_after_recorded_frame_publish(self):
-        shifted = shift_frame_events_after_publish(
-            [{"frame_index": 300, "command": "right_suction_start"}]
-        )
 
-        self.assertEqual(
-            shifted,
-            [{"frame_index": 301, "command": "right_suction_start"}],
-        )
+class RealPickAssetContractTests(unittest.TestCase):
+    ASSET = Path(
+        "/home/unix_ai/DataCollector/DataReplay_v3/v3_assets/takes/"
+        "pi05_wanda_new1.2_20260816_034411.h5"
+    )
 
+    @unittest.skipUnless(ASSET.is_file(), "read-only robot Pick asset unavailable")
+    def test_real_pick_has_all_607_recorded_control_channels(self):
+        import h5py
+
+        with h5py.File(self.ASSET, "r") as handle:
+            actions = handle["observations"]
+            expected = {
+                "target_qpos_arms": (607, 16),
+                "target_qpos_head": (607, 2),
+                "target_qpos_torso": (607, 1),
+                "target_base_vel": (607, 2),
+                "target_qpos_left_gripper": (607, 1),
+                "target_qpos_right_dexhand": (607, 2),
+            }
+            for channel, shape in expected.items():
+                self.assertEqual(actions[channel].shape, shape)
+            self.assertGreater(
+                float(np.max(np.abs(actions["target_base_vel"][:]))), 0.0
+            )
 
 class _Runtime:
     def __init__(self, *, holding=True, fail_replay=False):
@@ -349,6 +366,51 @@ class _ReplayNode:
         )
 
 
+class _BlockResult:
+    @classmethod
+    def success(cls, detail, **data):
+        return SimpleNamespace(
+            status=_Status("SUCCESS"), detail=detail, data=data
+        )
+
+    @classmethod
+    def fail(cls, detail, **data):
+        return SimpleNamespace(status=_Status("FAIL"), detail=detail, data=data)
+
+
+class _ExactPublishAdapter:
+    def __init__(self, events):
+        self._clock = lambda: 10.0
+        self._abort = threading.Event()
+        self._frames_sent = 0
+        self._fpc_block_result = _BlockResult
+        self.events = events
+        self.delegate = SimpleNamespace(execute_d01_event=self._d01)
+
+    def _d01(self, *, event, context):
+        self.events.append(("d01", event["command"]))
+        return SimpleNamespace(
+            status=_Status("SUCCESS"),
+            data={
+                "fresh_ack": True,
+                "fault": False,
+                "acknowledged_command": event["command"],
+            },
+        )
+
+    def _bounded_wait(self, _duration, _deadline, _label):
+        return ""
+
+
+class _RecordedNode:
+    def __init__(self, episode, events):
+        self.episode = episode
+        self.events = events
+
+    def _publish_frame(self, frame):
+        self.events.append(("publish", frame))
+
+
 class LegacyV3PickRuntimeTests(unittest.TestCase):
     def _runtime(self, frame_count=607, reported_frames=None):
         episode = _episode([0.212] * frame_count)
@@ -469,8 +531,13 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
             events.append(("recording", entry["d01_events"]))
             return "published"
 
+        runtime._publish_recorded_frames = (
+            lambda module, original_node, original_episode, entry, *args: original(
+                module, original_node, original_episode, entry, *args
+            )
+        )
+
         result = runtime._publish_exact_frames(
-            original,
             module,
             node,
             episode,
@@ -485,8 +552,41 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
         self.assertTrue(all(event[2] == (0.0, 0.0) for event in events[:-1]))
         self.assertEqual(
             events[-1][1],
-            [{"frame_index": 301, "command": "right_suction_start"}],
+            [{"frame_index": 300, "command": "right_suction_start"}],
         )
+
+    def test_recorded_frame_is_published_before_its_d01_event_without_delay(self):
+        runtime, _replay, _nav, _episode_value = self._runtime()
+        episode = _episode([0.20, 0.20])
+        events = []
+        adapter = _ExactPublishAdapter(events)
+        runtime.replay_adapter = adapter
+        node = _RecordedNode(episode, events)
+        module = SimpleNamespace(
+            rclpy=SimpleNamespace(spin_once=lambda *_args, **_kwargs: None)
+        )
+        entry = {
+            "speed": 1.0,
+            "d01_events": [
+                {"frame_index": 0, "command": "right_suction_start"}
+            ],
+        }
+
+        result = runtime._publish_recorded_frames(
+            module, node, episode, entry, runtime.context, 20.0, 0
+        )
+
+        self.assertEqual(
+            events,
+            [
+                ("publish", 0),
+                ("d01", "right_suction_start"),
+                ("publish", 1),
+            ],
+        )
+        self.assertEqual(result.status.value, "SUCCESS")
+        self.assertEqual(result.data["frames_sent"], 2)
+        self.assertEqual(runtime.d01_state, "holding_or_unknown")
 
     def test_rejects_missing_or_malformed_exact_replay_channels(self):
         for channel, shape in (
@@ -524,15 +624,13 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
         runtime.close()
         self.assertTrue(replay.closed)
 
-    def test_failed_pick_cleanup_stops_right_suction(self):
+    def test_failed_pick_cleanup_never_stops_a_holding_or_unknown_book(self):
         runtime, replay, _nav, _episode_value = self._runtime()
+        runtime._d01_state = "holding_or_unknown"
 
         runtime.cleanup_failed_pick()
 
-        self.assertEqual(
-            replay.d01_events[0][0], {"command": "right_suction_stop"}
-        )
-        self.assertIs(replay.d01_events[0][1], runtime.context)
+        self.assertEqual(replay.d01_events, [])
 
 if __name__ == "__main__":
     unittest.main()

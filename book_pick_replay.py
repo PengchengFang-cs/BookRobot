@@ -84,17 +84,6 @@ def build_frame_zero_preroll(joints, episode):
     )
 
 
-def shift_frame_events_after_publish(events):
-    """Adapt pre-frame legacy events so they run after their recorded frame."""
-
-    shifted = []
-    for event in events:
-        adjusted = dict(event)
-        adjusted["frame_index"] = int(adjusted["frame_index"]) + 1
-        shifted.append(adjusted)
-    return shifted
-
-
 def _finite_offset(value):
     if isinstance(value, bool) or not isinstance(value, Real):
         raise TypeError("Z offset must be a numeric value in metres")
@@ -219,6 +208,11 @@ class LegacyV3PickRuntime:
         self.entry["required_action_channels"] = required
         self.module = None
         self._closed = False
+        self._d01_state = "unattached"
+
+    @property
+    def d01_state(self):
+        return self._d01_state
 
     def load_episode(self):
         module = self.replay_adapter._load_module()
@@ -331,7 +325,6 @@ class LegacyV3PickRuntime:
 
     def _publish_exact_frames(
         self,
-        original_publish,
         module,
         node,
         episode,
@@ -375,18 +368,96 @@ class LegacyV3PickRuntime:
                 f"torso={torso_error:.4f} m"
             )
 
-        exact_entry = dict(entry)
-        exact_entry["d01_events"] = shift_frame_events_after_publish(
-            entry["d01_events"]
-        )
-        return original_publish(
+        return self._publish_recorded_frames(
             module,
             node,
             episode,
-            exact_entry,
+            entry,
             context,
             deadline,
             before,
+        )
+
+    def _publish_recorded_frames(
+        self, module, node, episode, entry, context, deadline, before
+    ):
+        """Publish each original frame, then execute events bound to that frame."""
+
+        adapter = self.replay_adapter
+        result_class = getattr(adapter, "_fpc_block_result", None)
+        if result_class is None:
+            result_class = adapter.__class__._publish_frames.__globals__["BlockResult"]
+
+        def fail(detail):
+            return result_class.fail(
+                detail, frames_sent=adapter._frames_sent - before
+            )
+
+        timestamps = episode.timestamps
+        speed = float(entry.get("speed", 1.0))
+        pending = [dict(event) for event in entry["d01_events"]]
+        executed = set()
+        origin = float(timestamps[0])
+        for frame in range(int(episode.num_frames)):
+            frame_started = adapter._clock()
+            if adapter._abort.is_set():
+                return fail("DataReplay aborted")
+            if adapter._clock() >= deadline:
+                return fail("DataReplay timeout")
+
+            relative = float(timestamps[frame]) - origin
+            node._publish_frame(frame)
+            adapter._frames_sent += 1
+            if hasattr(module.rclpy, "spin_once"):
+                module.rclpy.spin_once(node, timeout_sec=0.0)
+
+            for index, event in enumerate(pending):
+                due = (
+                    event.get("frame_index") == frame
+                    or (
+                        "time_seconds" in event
+                        and float(event["time_seconds"]) <= relative
+                    )
+                )
+                if index in executed or not due:
+                    continue
+                try:
+                    acknowledgement = adapter.delegate.execute_d01_event(
+                        event=event, context=context
+                    )
+                except Exception as exc:
+                    adapter._abort.set()
+                    return fail(f"D01 callback exception: {exc}")
+                data = getattr(acknowledgement, "data", {})
+                if (
+                    not _success(acknowledgement)
+                    or data.get("fresh_ack") is not True
+                    or data.get("fault") is not False
+                    or data.get("acknowledged_command") != event["command"]
+                ):
+                    adapter._abort.set()
+                    return fail("D01 event failed/faulted/stale")
+                if event["command"] == "right_suction_start":
+                    self._d01_state = "holding_or_unknown"
+                executed.add(index)
+
+            if frame + 1 < int(episode.num_frames):
+                interval = max(
+                    0.0, float(timestamps[frame + 1] - timestamps[frame])
+                ) / speed
+                remaining = max(0.0, interval - (adapter._clock() - frame_started))
+                wait_error = adapter._bounded_wait(
+                    remaining, deadline, "frame pacing"
+                )
+                if wait_error:
+                    return fail(wait_error)
+
+        if len(executed) != len(pending):
+            return fail("not all D01 events executed")
+        return result_class.success(
+            "DataReplay episode published",
+            frames_sent=adapter._frames_sent - before,
+            episode_id=str(getattr(episode, "episode_id", "unknown")),
         )
 
     def replay_pick(self, episode):
@@ -400,7 +471,6 @@ class LegacyV3PickRuntime:
 
         def exact_publish(module, node, replay_episode, entry, context, end, start):
             return self._publish_exact_frames(
-                original_publish,
                 module,
                 node,
                 replay_episode,
@@ -448,13 +518,13 @@ class LegacyV3PickRuntime:
                 "Stage-1 Pick D01 check failed: "
                 + str(getattr(result, "detail", "unknown error"))
             )
+        self._d01_state = "holding"
         return True
 
     def cleanup_failed_pick(self):
-        return self.replay_adapter.delegate.execute_d01_event(
-            event={"command": "right_suction_stop"},
-            context=self.context,
-        )
+        # A replay failure after suction starts leaves attachment state unknown.
+        # Never drop a possibly held book as a side effect of error handling.
+        return None
 
     def close(self):
         if not self._closed:
