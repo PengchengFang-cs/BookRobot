@@ -283,7 +283,6 @@ class LegacyV3PickRuntime:
         publishers = {
             "arms": node.pub_arms,
             "left_gripper": node.pub_gripper,
-            "right_dexhand": node.pub_dexhand,
             "head": node.pub_head,
             "torso": node.pub_torso,
             "base": node.pub_base,

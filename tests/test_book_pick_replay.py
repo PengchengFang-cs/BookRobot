@@ -472,6 +472,15 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
         self.assertTrue(nav.adapter.stopped)
         self.assertTrue(nav.adapter.destroyed)
 
+    def test_missing_replaced_right_dexhand_subscriber_does_not_block_replay(self):
+        times = iter((0.0, 0.0, 6.0))
+        runtime, _replay, _nav, episode = self._runtime()
+        runtime.monotonic_clock = lambda: next(times)
+        node = _ReplayNode(episode, [])
+        node.pub_dexhand = SimpleNamespace(get_subscription_count=lambda: 0)
+
+        runtime._wait_for_controller_subscribers(node, deadline=10.0)
+
     def test_loaded_replay_uses_direct_systemctl_without_sudo(self):
         runtime, _replay, _nav, _episode_value = self._runtime()
         runtime.load_episode()
