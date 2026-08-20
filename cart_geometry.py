@@ -201,6 +201,7 @@ def detect_cart_black_marker_pixels(
 
     x, y, width, height = observation.bbox
     minimum_area = max(8, int(round(width * height * 0.00008)))
+    maximum_area = max(minimum_area, int(round(width * height * 0.00080)))
     search = np.zeros(expected_shape, dtype=bool)
     search[y:y + height, x:x + width] = True
     gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
@@ -214,7 +215,19 @@ def detect_cart_black_marker_pixels(
         left, top, component_width, component_height, area = (
             int(value) for value in stats[label]
         )
-        if area < minimum_area:
+        if not minimum_area <= area <= maximum_area:
+            continue
+        if not (
+            max(4, int(round(width * 0.010)))
+            <= component_width
+            <= max(8, int(round(width * 0.070)))
+        ):
+            continue
+        if not (
+            max(2, int(round(height * 0.004)))
+            <= component_height
+            <= max(5, int(round(height * 0.040)))
+        ):
             continue
         aspect_ratio = component_width / component_height
         if not 0.5 <= aspect_ratio <= 6.0:
