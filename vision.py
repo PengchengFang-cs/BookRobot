@@ -260,6 +260,7 @@ class Vision:
         joints,
         *,
         rpc_captured_at_ns=None,
+        rpc_timeout_s=None,
         debug_path=None,
     ):
         color, depth = self._snapshot_arrays(snapshot)
@@ -279,6 +280,7 @@ class Vision:
             captured_at_ns=rpc_captured_at_ns,
             base_motion_epoch=f"fruittest-base-capture-{captured_at_ns}",
             head_motion_epoch=f"fruittest-head-capture-{captured_at_ns}",
+            timeout_s=rpc_timeout_s,
         )
         if not observations:
             return None
@@ -416,6 +418,7 @@ class Vision:
                         frame.snapshot,
                         frame.joints,
                         rpc_captured_at_ns=time.time_ns(),
+                        rpc_timeout_s=15.0,
                         debug_path=debug_path,
                     )
                 except Exception as error:

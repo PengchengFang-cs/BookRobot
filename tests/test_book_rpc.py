@@ -165,6 +165,34 @@ class BookRpcTests(unittest.TestCase):
         )
         self.assertTrue(all(item.scene_profile_id == "cart_loading_v1" for item in result))
 
+    def test_cart_batch_can_use_a_longer_per_request_deadline(self):
+        calls = []
+
+        def rpc(request, timeout):
+            calls.append((request, timeout))
+            return SimpleNamespace(
+                task="scene_cart_loading_segmentation",
+                scene_instances=[],
+            )
+
+        client = BookVisionClient(
+            self.settings(),
+            pb2_module=_FakePb2,
+            rpc=rpc,
+            clock_ns=lambda: 1_100_000_000,
+        )
+        client.detect_cart(
+            np.zeros((48, 64, 3), dtype=np.uint8),
+            captured_at_ns=1_000_000_000,
+            base_motion_epoch="base-1",
+            head_motion_epoch="head-1",
+            timeout_s=15.0,
+        )
+
+        request, timeout = calls[0]
+        self.assertEqual(request.header.deadline_ns, 16_000_000_000)
+        self.assertAlmostEqual(timeout, 14.9)
+
     def test_rejects_capture_after_its_absolute_deadline(self):
         client = BookVisionClient(
             self.settings(),
