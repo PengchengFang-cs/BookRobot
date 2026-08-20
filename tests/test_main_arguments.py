@@ -92,6 +92,23 @@ class MainArgumentTests(unittest.TestCase):
         self.assertTrue(args.cart_scan_navigation)
         self.assertEqual(args.book_index, 5)
 
+    def test_accepts_cart_approach_without_place_replay(self):
+        with patch.object(
+            sys,
+            "argv",
+            ["main.py", "--cart-approach-navigation"],
+        ):
+            args = arguments()
+
+        self.assertTrue(args.cart_approach_navigation)
+        self.assertFalse(args.book_place)
+        from pathlib import Path
+
+        run_script = (Path(__file__).resolve().parents[1] / "run.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(" --cart-approach-navigation ", run_script)
+
     def test_accepts_explicit_coarse_positioning_for_pick(self):
         with patch.object(
             sys,

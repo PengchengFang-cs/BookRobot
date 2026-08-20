@@ -84,6 +84,11 @@ def arguments():
         action="store_true",
         help="不拿书、不平移：原地每15度扫描一次，左转到90度后停止",
     )
+    operation.add_argument(
+        "--cart-approach-navigation",
+        action="store_true",
+        help="不拿书、不放书：扫描推车、粗定位到0.8米并做一次视觉微调",
+    )
     parser.add_argument(
         "--book-align-mode",
         choices=("legacy", "vector"),
@@ -137,6 +142,7 @@ def run_real(args):
             or args.book_pick_place
             or args.cart_perception
             or args.cart_scan_navigation
+            or args.cart_approach_navigation
         ):
             from book_navigation import BookAlignmentNavigator, Stage1CartMapNavigator
             from config import REPLAY_PICK_REFERENCE_PATH
@@ -177,11 +183,11 @@ def run_real(args):
                 print(json.dumps(payload, ensure_ascii=False))
                 return
 
-            if args.cart_scan_navigation:
+            if args.cart_scan_navigation or args.cart_approach_navigation:
                 navigation = Stage1CartMapNavigator(
                     vision=vision,
                     book_index=args.book_index,
-                    scan_only=True,
+                    scan_only=args.cart_scan_navigation,
                 ).navigate()
                 print(json.dumps({
                     "ok": True,

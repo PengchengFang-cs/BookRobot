@@ -24,7 +24,8 @@ if [[ " $* " == *" --book-align "* || \
       " $* " == *" --book-place-resume-final-segments "* || \
       " $* " == *" --book-pick-place "* || \
       " $* " == *" --cart-perception "* || \
-      " $* " == *" --cart-scan-navigation "* ]]; then
+      " $* " == *" --cart-scan-navigation "* || \
+      " $* " == *" --cart-approach-navigation "* ]]; then
   source "$DIR/scripts/book_vision_env.sh"
   exec python3 "$DIR/main.py" "$@"
 fi
