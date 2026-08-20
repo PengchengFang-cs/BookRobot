@@ -6,7 +6,10 @@ from unittest.mock import patch
 
 from book_navigation import (
     BookAlignmentNavigator,
+    CART_COARSE_FRONT_CLEARANCE_M,
     CART_ROUTE_MAX_SEGMENT_M,
+    CART_SCAN_STEP_RAD,
+    CART_SCAN_STEPS,
     CART_TURN_CLEARANCE_RETREAT_M,
     Stage1CartMapNavigator,
     build_cart_final_forward_commands,
@@ -38,6 +41,9 @@ class _Adapter:
         return SimpleNamespace(x=0.0, y=0.0, yaw=0.0)
 
     def current_task_pose(self):
+        if self.runtime.pose_readings:
+            x, y, yaw = self.runtime.pose_readings.pop(0)
+            return SimpleNamespace(x=x, y=y, yaw=yaw)
         return self.runtime.final_pose
 
     def current_absolute_imu_yaw(self):
@@ -67,6 +73,7 @@ class _Runtime:
         torso_readings=(),
         final_pose=(0.01, -0.02, 0.003),
         absolute_yaw=0.42,
+        pose_readings=(),
     ):
         self.commands = commands
         self.torso = torso
@@ -77,6 +84,7 @@ class _Runtime:
             x=final_pose[0], y=final_pose[1], yaw=final_pose[2]
         )
         self.absolute_yaw = absolute_yaw
+        self.pose_readings = list(pose_readings)
 
     @staticmethod
     def MappedMotionCommand(kind, value, axis):
@@ -98,6 +106,41 @@ class _Runtime:
 
 
 class BookNavigationTests(unittest.TestCase):
+    @staticmethod
+    def _cart_seen_from_pose(pose, *, confidence, origin_center=(1.8, 0.5, 0.7)):
+        x, y, yaw = pose
+        cosine = math.cos(-yaw)
+        sine = math.sin(-yaw)
+
+        def from_origin(point):
+            dx = point[0] - x
+            dy = point[1] - y
+            return (
+                cosine * dx - sine * dy,
+                sine * dx + cosine * dy,
+                point[2],
+            )
+
+        def axis_from_origin(axis):
+            return (
+                cosine * axis[0] - sine * axis[1],
+                sine * axis[0] + cosine * axis[1],
+                axis[2],
+            )
+
+        slots = tuple((1.8, 0.5 + 0.1 * index, 0.7) for index in range(5))
+        platform = SimpleNamespace(
+            center=from_origin(origin_center),
+            forward_axis=axis_from_origin((1.0, 0.0, 0.0)),
+            lateral_axis_right_to_left=axis_from_origin((0.0, 1.0, 0.0)),
+            normal=(0.0, 0.0, 1.0),
+            depth_extent_m=0.4,
+            lateral_extent_m=0.5,
+            slot_centers=tuple(from_origin(slot) for slot in slots),
+            confidence=confidence,
+        )
+        return SimpleNamespace(platform=platform)
+
     @patch("book_navigation.load_navnav_runtime")
     def test_real_runtime_is_loaded_only_when_alignment_starts(self, load_runtime):
         runtime = _Runtime([])
@@ -343,6 +386,121 @@ class BookNavigationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "between 1 and 4"):
             build_cart_final_forward_commands(runtime, dx_m, 5)
+
+    def test_cart_scan_only_retreats_and_samples_every_fifteen_degrees(self):
+        scan_poses = tuple(
+            (-0.2, 0.0, CART_SCAN_STEP_RAD * index)
+            for index in range(1, CART_SCAN_STEPS + 1)
+        )
+        runtime = _Runtime(
+            [],
+            pose_readings=scan_poses + (scan_poses[-1],),
+        )
+        carts = [
+            self._cart_seen_from_pose(
+                pose,
+                confidence=0.9 if index == 3 else 0.5,
+            )
+            for index, pose in enumerate(scan_poses, 1)
+        ]
+        vision = SimpleNamespace(find_cart=lambda: carts.pop(0))
+
+        result = Stage1CartMapNavigator(
+            runtime,
+            vision=vision,
+            book_index=2,
+            scan_only=True,
+        ).navigate()
+
+        commands = [row for row, _precision in runtime.adapter.executed]
+        self.assertEqual(result.mode, "cart-scan-only")
+        self.assertEqual(result.command_count, 1 + CART_SCAN_STEPS)
+        self.assertEqual(commands[0].kind, runtime.WandaCommandKind.DRIVE_BACKWARD)
+        self.assertAlmostEqual(commands[0].value, CART_TURN_CLEARANCE_RETREAT_M)
+        self.assertEqual([row.kind for row in commands[1:]], ["spin"] * 6)
+        self.assertTrue(all(
+            math.isclose(row.value, CART_SCAN_STEP_RAD) for row in commands[1:]
+        ))
+        self.assertAlmostEqual(result.selected_scan_yaw_rad, math.radians(45.0))
+        self.assertEqual(result.slot_index, 2)
+        for actual, expected in zip(
+            result.slot_center_origin_m,
+            (1.8, 0.6, 0.7),
+        ):
+            self.assertAlmostEqual(actual, expected)
+        self.assertEqual(carts, [])
+        self.assertEqual(runtime.adapter.yaw_corrections, [])
+        self.assertTrue(runtime.adapter.stopped)
+
+    def test_cart_visual_navigation_uses_slot_and_stops_point_eight_from_edge(self):
+        scan_poses = tuple(
+            (-0.2, 0.0, CART_SCAN_STEP_RAD * index)
+            for index in range(1, CART_SCAN_STEPS + 1)
+        )
+        lateral_pose = (-0.2, 0.5, math.pi / 2.0)
+        forward_pose = (-0.2, 0.5, 0.0)
+        final_pose = (0.8, 0.5, 0.0)
+        runtime = _Runtime(
+            [],
+            absolute_yaw=0.12,
+            pose_readings=(
+                scan_poses
+                + (scan_poses[-1], lateral_pose, forward_pose, final_pose)
+            ),
+        )
+        carts = [
+            self._cart_seen_from_pose(
+                pose,
+                confidence=0.95 if index == 4 else 0.6,
+            )
+            for index, pose in enumerate(scan_poses, 1)
+        ]
+        vision = SimpleNamespace(find_cart=lambda: carts.pop(0))
+
+        result = Stage1CartMapNavigator(
+            runtime,
+            vision=vision,
+            book_index=1,
+        ).navigate()
+
+        commands = [row for row, _precision in runtime.adapter.executed]
+        self.assertEqual(result.mode, "cart-visual-manhattan")
+        for actual, expected in zip(
+            result.slot_center_origin_m,
+            (1.8, 0.5, 0.7),
+        ):
+            self.assertAlmostEqual(actual, expected)
+        self.assertAlmostEqual(result.platform_near_x_origin_m, 1.6)
+        self.assertAlmostEqual(
+            result.platform_near_x_origin_m - final_pose[0],
+            CART_COARSE_FRONT_CLEARANCE_M,
+        )
+        self.assertAlmostEqual(result.selected_scan_yaw_rad, math.radians(60.0))
+        self.assertEqual(commands[0].kind, "backward")
+        self.assertEqual([row.kind for row in commands[1:7]], ["spin"] * 6)
+        self.assertEqual([row.kind for row in commands[7:10]], ["forward"] * 3)
+        self.assertAlmostEqual(sum(row.value for row in commands[7:10]), 0.5)
+        self.assertEqual(commands[10].kind, "spin")
+        self.assertAlmostEqual(commands[10].value, -math.pi / 2.0)
+        self.assertEqual([row.kind for row in commands[11:]], ["forward"] * 5)
+        self.assertAlmostEqual(sum(row.value for row in commands[11:]), 1.0)
+        self.assertEqual(runtime.adapter.yaw_corrections[0]["target_yaw_rad"], 0.12)
+        self.assertTrue(runtime.adapter.stopped)
+
+    def test_cart_scan_stops_after_ninety_degrees_when_nothing_is_detected(self):
+        scan_poses = tuple(
+            (-0.2, 0.0, CART_SCAN_STEP_RAD * index)
+            for index in range(1, CART_SCAN_STEPS + 1)
+        )
+        runtime = _Runtime([], pose_readings=scan_poses + (scan_poses[-1],))
+        vision = SimpleNamespace(find_cart=lambda: None)
+
+        with self.assertRaisesRegex(RuntimeError, "没有获得可用的小推车顶面"):
+            Stage1CartMapNavigator(runtime, vision=vision, scan_only=True).navigate()
+
+        commands = [row for row, _precision in runtime.adapter.executed]
+        self.assertEqual(len(commands), 1 + CART_SCAN_STEPS)
+        self.assertTrue(runtime.adapter.stopped)
 
 
 if __name__ == "__main__":

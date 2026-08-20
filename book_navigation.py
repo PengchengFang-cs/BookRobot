@@ -16,6 +16,9 @@ RETURN_TABLE_MAP_POSE = (2.857213, -2.520253, math.radians(-1.920977))
 CART_FRONT_MAP_POSE = (3.411691, -1.647823, math.radians(-1.558860))
 CART_TURN_CLEARANCE_RETREAT_M = 0.20
 CART_ROUTE_MAX_SEGMENT_M = 0.20
+CART_SCAN_STEP_RAD = math.radians(15.0)
+CART_SCAN_STEPS = 6
+CART_COARSE_FRONT_CLEARANCE_M = 0.80
 
 
 @dataclass(frozen=True)
@@ -25,6 +28,19 @@ class BookAlignmentExecution:
     odom_dx_m: float
     odom_dy_m: float
     imu_dyaw_rad: float
+
+
+@dataclass(frozen=True)
+class CartVisualNavigationExecution:
+    command_count: int
+    mode: str
+    odom_dx_m: float
+    odom_dy_m: float
+    imu_dyaw_rad: float
+    selected_scan_yaw_rad: float
+    slot_index: int
+    slot_center_origin_m: tuple[float, float, float]
+    platform_near_x_origin_m: float
 
 
 def _normalize_yaw(value):
@@ -160,14 +176,29 @@ def cart_transition_body_delta(
 class Stage1CartMapNavigator:
     """Follow an axis-aligned table-to-cart route with turn clearance."""
 
-    def __init__(self, runtime=None, *, resume_final_forward_segments=None):
+    def __init__(
+        self,
+        runtime=None,
+        *,
+        resume_final_forward_segments=None,
+        vision=None,
+        book_index=1,
+        scan_only=False,
+    ):
         self.runtime = runtime
         self.resume_final_forward_segments = resume_final_forward_segments
+        self.vision = vision
+        self.book_index = int(book_index)
+        self.scan_only = bool(scan_only)
+        if self.book_index < 1 or self.book_index > 5:
+            raise ValueError("book_index must be between 1 and 5")
 
     def navigate(self):
         if self.runtime is None:
             self.runtime = load_navnav_runtime()
         adapter = self.runtime.WandaRos2Adapter()
+        if self.vision is not None and self.resume_final_forward_segments is None:
+            return self._navigate_with_cart_scan(adapter)
         dx_m, dy_m = cart_transition_body_delta()
         if self.resume_final_forward_segments is None:
             commands = build_cart_manhattan_commands(self.runtime, dx_m, dy_m)
@@ -200,8 +231,165 @@ class Stage1CartMapNavigator:
         finally:
             adapter.stop()
 
+    def _navigate_with_cart_scan(self, adapter):
+        commands_sent = 0
+        candidates = []
+        try:
+            adapter.preflight()
+            starting_yaw = adapter.current_absolute_imu_yaw()
+            adapter.capture_task_origin()
+            retreat = self.runtime.MappedMotionCommand(
+                self.runtime.WandaCommandKind.DRIVE_BACKWARD,
+                CART_TURN_CLEARANCE_RETREAT_M,
+                "XY",
+            )
+            adapter.execute_command(retreat, precision_mode=True)
+            commands_sent += 1
+
+            for _step in range(CART_SCAN_STEPS):
+                turn = self.runtime.MappedMotionCommand(
+                    self.runtime.WandaCommandKind.SPIN,
+                    CART_SCAN_STEP_RAD,
+                    "Y",
+                )
+                adapter.execute_command(turn, precision_mode=True)
+                commands_sent += 1
+                pose = adapter.current_task_pose()
+                cart = self.vision.find_cart()
+                if cart is None or cart.platform is None:
+                    continue
+                platform = transform_cart_platform_to_origin(cart.platform, pose)
+                candidates.append((platform.confidence, float(pose.yaw), platform))
+
+            pose = adapter.current_task_pose()
+            if not candidates:
+                raise RuntimeError("旋转90度期间没有获得可用的小推车顶面")
+            _confidence, selected_scan_yaw, platform = max(
+                candidates,
+                key=lambda row: row[0],
+            )
+            slot_center = platform.slot_centers[self.book_index - 1]
+            platform_near_x = _platform_near_x(platform)
+
+            if self.scan_only:
+                return CartVisualNavigationExecution(
+                    command_count=commands_sent,
+                    mode="cart-scan-only",
+                    odom_dx_m=float(pose.x),
+                    odom_dy_m=float(pose.y),
+                    imu_dyaw_rad=float(pose.yaw),
+                    selected_scan_yaw_rad=selected_scan_yaw,
+                    slot_index=self.book_index,
+                    slot_center_origin_m=slot_center,
+                    platform_near_x_origin_m=platform_near_x,
+                )
+
+            lateral_delta = float(slot_center[1]) - float(pose.y)
+            lateral_kind = (
+                self.runtime.WandaCommandKind.DRIVE_FORWARD
+                if lateral_delta >= 0.0
+                else self.runtime.WandaCommandKind.DRIVE_BACKWARD
+            )
+            for command in _distance_commands(
+                self.runtime,
+                lateral_kind,
+                abs(lateral_delta),
+            ):
+                adapter.execute_command(command, precision_mode=True)
+                commands_sent += 1
+
+            return_turn = self.runtime.MappedMotionCommand(
+                self.runtime.WandaCommandKind.SPIN,
+                -math.pi / 2.0,
+                "Y",
+            )
+            adapter.execute_command(return_turn, precision_mode=True)
+            commands_sent += 1
+
+            pose = adapter.current_task_pose()
+            target_robot_x = platform_near_x - CART_COARSE_FRONT_CLEARANCE_M
+            forward_delta = target_robot_x - float(pose.x)
+            forward_kind = (
+                self.runtime.WandaCommandKind.DRIVE_FORWARD
+                if forward_delta >= 0.0
+                else self.runtime.WandaCommandKind.DRIVE_BACKWARD
+            )
+            for command in _distance_commands(
+                self.runtime,
+                forward_kind,
+                abs(forward_delta),
+            ):
+                adapter.execute_command(command, precision_mode=True)
+                commands_sent += 1
+
+            adapter.correct_absolute_imu_yaw(
+                target_yaw_rad=starting_yaw,
+                tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
+            )
+            pose = adapter.current_task_pose()
+            return CartVisualNavigationExecution(
+                command_count=commands_sent,
+                mode="cart-visual-manhattan",
+                odom_dx_m=float(pose.x),
+                odom_dy_m=float(pose.y),
+                imu_dyaw_rad=float(pose.yaw),
+                selected_scan_yaw_rad=selected_scan_yaw,
+                slot_index=self.book_index,
+                slot_center_origin_m=slot_center,
+                platform_near_x_origin_m=platform_near_x,
+            )
+        finally:
+            adapter.stop()
+
+
+def _rotate_xy(value, yaw):
+    cosine = math.cos(float(yaw))
+    sine = math.sin(float(yaw))
+    return (
+        cosine * float(value[0]) - sine * float(value[1]),
+        sine * float(value[0]) + cosine * float(value[1]),
+    )
+
+
+def transform_cart_platform_to_origin(platform, pose):
+    """Express one capture-time base_link platform in the scan origin frame."""
+
+    def point(value):
+        x, y = _rotate_xy(value, pose.yaw)
+        return (
+            float(pose.x) + x,
+            float(pose.y) + y,
+            float(value[2]),
+        )
+
+    def axis(value):
+        x, y = _rotate_xy(value, pose.yaw)
+        return (x, y, float(value[2]))
+
+    return SimpleNamespace(
+        center=point(platform.center),
+        forward_axis=axis(platform.forward_axis),
+        lateral_axis_right_to_left=axis(platform.lateral_axis_right_to_left),
+        normal=axis(platform.normal),
+        depth_extent_m=float(platform.depth_extent_m),
+        lateral_extent_m=float(platform.lateral_extent_m),
+        slot_centers=tuple(point(value) for value in platform.slot_centers),
+        confidence=float(platform.confidence),
+    )
+
+
+def _platform_near_x(platform):
+    half_x_extent = 0.5 * (
+        abs(float(platform.forward_axis[0])) * float(platform.depth_extent_m)
+        + abs(float(platform.lateral_axis_right_to_left[0]))
+        * float(platform.lateral_extent_m)
+    )
+    return float(platform.center[0]) - half_x_extent
+
 
 def _distance_commands(runtime, kind, distance_m):
+    if float(distance_m) <= 1e-9:
+        return ()
     count = max(1, math.ceil(float(distance_m) / CART_ROUTE_MAX_SEGMENT_M))
     segment = float(distance_m) / count
     return tuple(

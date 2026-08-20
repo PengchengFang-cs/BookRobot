@@ -81,6 +81,17 @@ class MainArgumentTests(unittest.TestCase):
         )
         self.assertIn(" --cart-perception ", run_script)
 
+    def test_accepts_cart_scan_and_five_slot_index(self):
+        with patch.object(
+            sys,
+            "argv",
+            ["main.py", "--cart-scan-navigation", "--book-index", "5"],
+        ):
+            args = arguments()
+
+        self.assertTrue(args.cart_scan_navigation)
+        self.assertEqual(args.book_index, 5)
+
     def test_accepts_explicit_coarse_positioning_for_pick(self):
         with patch.object(
             sys,

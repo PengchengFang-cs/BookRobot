@@ -321,7 +321,7 @@ def run_book_pick_once(
 def run_book_place_once(cart_navigator, replayer, say=print):
     """Navigate from the reviewed table point and replay one cart Place."""
 
-    say("保持右吸盘开启，按地图从还书桌前前往小推车前")
+    say("保持右吸盘开启，扫描小推车并按直角路线前往对应槽位")
     navigation = cart_navigator.navigate()
     say(_format_navigation("小推车地图导航反馈", navigation))
     say("恢复 DataReplay 2.4 第0帧姿态并开始原速 Place")

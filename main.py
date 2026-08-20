@@ -79,6 +79,11 @@ def arguments():
         action="store_true",
         help="只检测小推车顶面并输出五个槽位，不产生运动",
     )
+    operation.add_argument(
+        "--cart-scan-navigation",
+        action="store_true",
+        help="不拿书：后退20cm并每15度扫描一次，旋转到90度后停止",
+    )
     parser.add_argument(
         "--book-align-mode",
         choices=("legacy", "vector"),
@@ -95,6 +100,13 @@ def arguments():
         type=float,
         default=0.0,
         help="薄书 Pick 相对录像额外下压毫米数；默认0",
+    )
+    parser.add_argument(
+        "--book-index",
+        type=int,
+        choices=range(1, 6),
+        default=1,
+        help="当前书本对应的小推车槽位，1为机器人视角最右侧",
     )
     return parser.parse_args()
 
@@ -124,6 +136,7 @@ def run_real(args):
             or args.book_place_resume_final_segments is not None
             or args.book_pick_place
             or args.cart_perception
+            or args.cart_scan_navigation
         ):
             from book_navigation import BookAlignmentNavigator, Stage1CartMapNavigator
             from config import REPLAY_PICK_REFERENCE_PATH
@@ -160,6 +173,26 @@ def run_real(args):
                 print(json.dumps(payload, ensure_ascii=False))
                 return
 
+            if args.cart_scan_navigation:
+                navigation = Stage1CartMapNavigator(
+                    vision=vision,
+                    book_index=args.book_index,
+                    scan_only=True,
+                ).navigate()
+                print(json.dumps({
+                    "ok": True,
+                    "mode": navigation.mode,
+                    "commands": navigation.command_count,
+                    "selected_scan_yaw_deg": (
+                        navigation.selected_scan_yaw_rad * 180.0 / 3.141592653589793
+                    ),
+                    "slot_index": navigation.slot_index,
+                    "slot_center_origin_m": navigation.slot_center_origin_m,
+                    "platform_near_x_origin_m": navigation.platform_near_x_origin_m,
+                    "debug_image": str(vision.debug_path),
+                }, ensure_ascii=False))
+                return
+
             say = lambda text: print(f"[机器人] {text}")
             feedback = dict(
                 joint_positions=lambda: dict(vision.joints),
@@ -177,7 +210,13 @@ def run_real(args):
                     Stage1CartMapNavigator(
                         resume_final_forward_segments=(
                             args.book_place_resume_final_segments
-                        )
+                        ),
+                        vision=(
+                            None
+                            if args.book_place_resume_final_segments is not None
+                            else vision
+                        ),
+                        book_index=args.book_index,
                     ),
                     Stage1BookPlaceReplayer(**feedback),
                     say,
@@ -198,7 +237,10 @@ def run_real(args):
                         navigator,
                         pick_replayer,
                         replay_reference,
-                        Stage1CartMapNavigator(),
+                        Stage1CartMapNavigator(
+                            vision=vision,
+                            book_index=args.book_index,
+                        ),
                         Stage1BookPlaceReplayer(**feedback),
                         say,
                         coarse=args.book_coarse,

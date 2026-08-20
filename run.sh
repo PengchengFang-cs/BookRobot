@@ -23,7 +23,8 @@ if [[ " $* " == *" --book-align "* || \
       " $* " == *" --book-place "* || \
       " $* " == *" --book-place-resume-final-segments "* || \
       " $* " == *" --book-pick-place "* || \
-      " $* " == *" --cart-perception "* ]]; then
+      " $* " == *" --cart-perception "* || \
+      " $* " == *" --cart-scan-navigation "* ]]; then
   source "$DIR/scripts/book_vision_env.sh"
   exec python3 "$DIR/main.py" "$@"
 fi
