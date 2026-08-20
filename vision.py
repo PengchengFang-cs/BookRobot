@@ -19,7 +19,6 @@ from book_rpc import BookVisionClient
 from cart_geometry import (
     CartGeometryError,
     reconstruct_cart_body_target,
-    reconstruct_cart_platform,
     reconstruct_cart_top_platform,
     select_leftmost_cart_platform,
 )
@@ -344,10 +343,6 @@ class Vision:
                     platform_candidates.append(reconstruct_cart_top_platform(
                         **geometry_args
                     ))
-                elif observation.semantic_class == "cart_platform":
-                    platform_candidates.append(reconstruct_cart_platform(
-                        **geometry_args
-                    ))
             except CartGeometryError as error:
                 print(f"[视觉] 小推车几何不可用: {error}")
         body_target = (
@@ -556,8 +551,12 @@ class Vision:
                     f"[视觉] 推车第 {attempt}/{maximum_attempts} 次没有结果，继续"
                 )
 
+        def find_usable_platform():
+            result = self.find_cart()
+            return result if result is not None and result.platform is not None else None
+
         return collect_successful_results(
-            self.find_cart,
+            find_usable_platform,
             successful_samples=successful_samples,
             maximum_attempts=maximum_attempts,
             on_attempt=report,

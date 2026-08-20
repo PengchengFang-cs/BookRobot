@@ -1,9 +1,13 @@
+import math
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from book_geometry import BookGeometry
 from mission import (
+    CART_PLACE_X_TOLERANCE_M,
+    CART_PLACE_Y_TOLERANCE_M,
+    CART_PLACE_YAW_TOLERANCE_RAD,
     run_book_place_once,
     run_book_alignment_from_current_once,
     run_book_alignment_once,
@@ -469,6 +473,11 @@ class BookAlignmentMissionTests(unittest.TestCase):
 
 
 class CartPlaceMissionTests(unittest.TestCase):
+    def test_place_uses_user_confirmed_twenty_mm_and_five_degree_ranges(self):
+        self.assertAlmostEqual(CART_PLACE_X_TOLERANCE_M, 0.020)
+        self.assertAlmostEqual(CART_PLACE_Y_TOLERANCE_M, 0.020)
+        self.assertAlmostEqual(CART_PLACE_YAW_TOLERANCE_RAD, math.radians(5.0))
+
     def test_repeats_cart_measurement_then_replays_place(self):
         initial = tuple(_cart(0.82 + jitter, 0.03) for jitter in (-0.001, 0.0, 0.001))
         final = tuple(_cart(0.77 + jitter, -0.02) for jitter in (-0.001, 0.0, 0.001))
