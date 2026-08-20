@@ -42,13 +42,21 @@ def main(argv=None):
     client = BookVisionClient.from_config()
 
     def detect(image_bgr):
-        captured_at_ns = time.time_ns()
-        return client.detect_cart(
-            image_bgr,
-            captured_at_ns=captured_at_ns,
-            base_motion_epoch=f"place-calibration-base-{captured_at_ns}",
-            head_motion_epoch=f"place-calibration-head-{captured_at_ns}",
-        )
+        last_error = None
+        for attempt in range(3):
+            captured_at_ns = time.time_ns()
+            try:
+                return client.detect_cart(
+                    image_bgr,
+                    captured_at_ns=captured_at_ns,
+                    base_motion_epoch=f"place-calibration-base-{captured_at_ns}",
+                    head_motion_epoch=f"place-calibration-head-{captured_at_ns}",
+                )
+            except Exception as error:
+                last_error = error
+                if attempt < 2:
+                    time.sleep(0.2 * (attempt + 1))
+        raise last_error
 
     try:
         reference = calibrate_replay_place_reference(
