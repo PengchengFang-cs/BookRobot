@@ -6,11 +6,13 @@ from unittest.mock import patch
 
 from book_navigation import (
     BookAlignmentNavigator,
+    CartPlaceDockingNavigator,
     CART_ROUTE_MAX_SEGMENT_M,
     CART_SCAN_STEP_RAD,
     CART_SCAN_STEPS,
     CART_TURN_CLEARANCE_RETREAT_M,
     Stage1CartNavigator,
+    Stage1TableReturnNavigator,
     load_navnav_runtime,
 )
 
@@ -106,6 +108,70 @@ class _Runtime:
 
 
 class BookNavigationTests(unittest.TestCase):
+    def test_table_return_scans_rightmost_book_and_runs_inverse_grid_route(self):
+        runtime = _Runtime([], absolute_yaw=0.2)
+        books = (
+            SimpleNamespace(suction_point=(0.8, -1.20, 0.7)),
+            SimpleNamespace(suction_point=(0.9, -1.50, 0.7)),
+        )
+        vision = SimpleNamespace(
+            scan_books_to_robot_right=lambda angles: books,
+        )
+
+        result = Stage1TableReturnNavigator(runtime, vision=vision).navigate()
+
+        commands = [command for command, _precision in runtime.adapter.executed]
+        self.assertEqual(result.selected_book_point_m, (0.9, -1.5, 0.7))
+        self.assertAlmostEqual(result.table_leg_m, 1.1849002166387)
+        self.assertEqual(commands[0].kind, "backward")
+        self.assertAlmostEqual(commands[0].value, 0.2)
+        self.assertEqual(commands[1].kind, "spin")
+        self.assertAlmostEqual(commands[1].value, -math.pi / 2.0)
+        self.assertTrue(all(command.kind == "forward" for command in commands[2:-2]))
+        self.assertEqual(commands[-2].kind, "spin")
+        self.assertAlmostEqual(commands[-2].value, math.pi / 2.0)
+        self.assertEqual(commands[-1].kind, "forward")
+        self.assertAlmostEqual(commands[-1].value, 0.2)
+        self.assertAlmostEqual(
+            runtime.adapter.yaw_corrections[-1]["target_yaw_rad"], 0.2
+        )
+        self.assertTrue(runtime.adapter.stopped)
+
+    def test_cart_place_corrects_platform_yaw_before_xy(self):
+        runtime = _Runtime([], absolute_yaw=0.3)
+        target = SimpleNamespace(
+            yaw_error_rad=math.radians(2.0),
+            reference_anchor_m=(0.77, -0.08, 0.54),
+            observed_anchor_m=(0.80, -0.06, 0.54),
+        )
+
+        result = CartPlaceDockingNavigator(runtime).align(target)
+
+        self.assertEqual(result.mode, "cart-place-yaw")
+        self.assertEqual(runtime.adapter.executed, [])
+        self.assertAlmostEqual(
+            runtime.adapter.yaw_corrections[0]["target_yaw_rad"],
+            0.3 + math.radians(2.0),
+        )
+        self.assertTrue(runtime.adapter.stopped)
+
+    def test_cart_place_uses_vector_xy_after_yaw_matches(self):
+        runtime = _Runtime([], absolute_yaw=0.3)
+        target = SimpleNamespace(
+            yaw_error_rad=math.radians(0.2),
+            reference_anchor_m=(0.77, -0.08, 0.54),
+            observed_anchor_m=(0.82, -0.06, 0.54),
+        )
+
+        result = CartPlaceDockingNavigator(runtime).align(target)
+
+        self.assertEqual(result.mode, "cart-place-xy")
+        self.assertGreater(len(runtime.adapter.executed), 0)
+        self.assertAlmostEqual(
+            runtime.adapter.yaw_corrections[-1]["target_yaw_rad"], 0.3
+        )
+        self.assertTrue(runtime.adapter.stopped)
+
     @staticmethod
     def _batch_vision(carts, events=None):
         events = [] if events is None else events

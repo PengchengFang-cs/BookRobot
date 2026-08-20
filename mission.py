@@ -3,6 +3,11 @@
 from dataclasses import dataclass
 from statistics import median
 
+from cart_place_alignment import (
+    build_cart_place_alignment_target,
+    median_cart_place_alignment_target,
+)
+
 from book_alignment import (
     build_replay_alignment_target,
     predict_book_after_base_motion,
@@ -18,6 +23,12 @@ BOOK_ALIGNMENT_Y_TOLERANCE_M = 0.010
 BOOK_VISION_SUCCESSFUL_SAMPLES = 3
 BOOK_VISION_MAXIMUM_ATTEMPTS = 5
 BOOK_ALIGNMENT_MAXIMUM_CORRECTIONS = 3
+CART_PLACE_X_TOLERANCE_M = 0.020
+CART_PLACE_Y_TOLERANCE_M = 0.010
+CART_PLACE_YAW_TOLERANCE_RAD = 0.5 * 3.141592653589793 / 180.0
+CART_PLACE_MAXIMUM_CORRECTIONS = 4
+CART_VISION_SUCCESSFUL_SAMPLES = 3
+CART_VISION_MAXIMUM_ATTEMPTS = 5
 
 
 @dataclass(frozen=True)
@@ -35,6 +46,27 @@ class BookAlignmentRun:
 class BookPickRun:
     alignment: BookAlignmentRun
     replay: object
+
+
+@dataclass(frozen=True)
+class CartPlaceAlignmentRun:
+    first: object
+    final: object
+    last_navigation: object
+    within_tolerance: bool
+
+
+@dataclass(frozen=True)
+class BookPlaceRun:
+    alignment: CartPlaceAlignmentRun
+    replay: object
+
+
+@dataclass(frozen=True)
+class BookPickPlaceRun:
+    pick: BookPickRun
+    coarse_cart_navigation: object
+    place: BookPlaceRun
 
 
 @dataclass(frozen=True)
@@ -304,6 +336,148 @@ def run_book_pick_once(
         f"D01 holding={replay.d01_holding if replay.d01_holding is not None else '未检查'}"
     )
     return BookPickRun(alignment=alignment, replay=replay)
+
+
+def _stable_cart_place_target(vision, replay_reference, slot_index):
+    find_samples = getattr(vision, "find_cart_samples", None)
+    if callable(find_samples):
+        carts = find_samples(
+            successful_samples=CART_VISION_SUCCESSFUL_SAMPLES,
+            maximum_attempts=CART_VISION_MAXIMUM_ATTEMPTS,
+        )
+        if len(carts) < CART_VISION_SUCCESSFUL_SAMPLES:
+            raise RuntimeError(
+                "多帧视觉没有获得足够的小推车托板结果: "
+                f"{len(carts)}/{CART_VISION_SUCCESSFUL_SAMPLES}"
+            )
+    else:
+        carts = (vision.find_cart(),)
+    targets = [
+        build_cart_place_alignment_target(
+            platform=cart.platform,
+            replay_reference=replay_reference,
+            slot_index=slot_index,
+        )
+        for cart in carts
+        if cart is not None and cart.platform is not None
+    ]
+    if not targets:
+        raise RuntimeError("没有检测到可用于 Place 对位的小推车托板")
+    return median_cart_place_alignment_target(targets)
+
+
+def _cart_place_within_tolerance(target):
+    return (
+        abs(target.residual_m[0]) <= CART_PLACE_X_TOLERANCE_M
+        and abs(target.residual_m[1]) <= CART_PLACE_Y_TOLERANCE_M
+        and abs(target.yaw_error_rad) <= CART_PLACE_YAW_TOLERANCE_RAD
+    )
+
+
+def run_cart_place_alignment_once(
+    vision,
+    navigator,
+    replay_reference,
+    *,
+    slot_index,
+    say=print,
+):
+    """Repeatedly match live shelf geometry to Place-2.4 frame zero."""
+
+    first = None
+    last_navigation = None
+    for correction_index in range(CART_PLACE_MAXIMUM_CORRECTIONS + 1):
+        target = _stable_cart_place_target(
+            vision, replay_reference, slot_index
+        )
+        if first is None:
+            first = target
+        say(
+            "Place 2.4 细校准 "
+            f"{correction_index}/{CART_PLACE_MAXIMUM_CORRECTIONS}: "
+            f"前后={target.residual_m[0]:.3f} m, "
+            f"左右={target.residual_m[1]:.3f} m, "
+            f"yaw={target.yaw_error_rad * 180.0 / 3.141592653589793:.2f}°"
+        )
+        if _cart_place_within_tolerance(target):
+            return CartPlaceAlignmentRun(first, target, last_navigation, True)
+        if correction_index == CART_PLACE_MAXIMUM_CORRECTIONS:
+            return CartPlaceAlignmentRun(first, target, last_navigation, False)
+        last_navigation = navigator.align(target)
+        say(_format_navigation("小推车细校准运动反馈", last_navigation))
+    raise AssertionError("unreachable")
+
+
+def run_book_place_once(
+    vision,
+    navigator,
+    replayer,
+    replay_reference,
+    *,
+    slot_index,
+    say=print,
+):
+    alignment = run_cart_place_alignment_once(
+        vision,
+        navigator,
+        replay_reference,
+        slot_index=slot_index,
+        say=say,
+    )
+    if not alignment.within_tolerance:
+        target = alignment.final
+        raise RuntimeError(
+            "Place 最终对位未达标，不启动 DataReplay: "
+            f"前后={target.residual_m[0]:.3f} m, "
+            f"左右={target.residual_m[1]:.3f} m, "
+            f"yaw={target.yaw_error_rad * 180.0 / 3.141592653589793:.2f}°"
+        )
+    say("恢复 Place 2.4 第0帧全身姿态并以1.0倍速回放")
+    replay = replayer.place()
+    say(
+        f"Place 回放完成: frames={replay.frames_sent}, "
+        f"torso target={replay.torso_target_m:.3f} m, "
+        f"actual={replay.torso_actual_m:.3f} m, "
+        f"D01 released={replay.d01_released}"
+    )
+    return BookPlaceRun(alignment=alignment, replay=replay)
+
+
+def run_book_pick_place_once(
+    vision,
+    book_navigator,
+    pick_replayer,
+    pick_reference,
+    cart_navigator,
+    place_navigator,
+    place_replayer,
+    place_reference,
+    *,
+    slot_index,
+    coarse=False,
+    press_m=0.0,
+    say=print,
+):
+    pick = run_book_pick_once(
+        vision,
+        book_navigator,
+        pick_replayer,
+        pick_reference,
+        say=say,
+        coarse=coarse,
+        press_m=press_m,
+    )
+    say("Pick 完成：后退20cm并沿直角路线粗导航到小推车")
+    coarse_cart_navigation = cart_navigator.navigate()
+    place = run_book_place_once(
+        vision,
+        place_navigator,
+        place_replayer,
+        place_reference,
+        slot_index=slot_index,
+        say=say,
+    )
+    return BookPickPlaceRun(pick, coarse_cart_navigation, place)
 
 
 def run_one_fruit(fruit, vision, navigation, arm, say=print):

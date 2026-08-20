@@ -20,6 +20,9 @@ export PYTHONUNBUFFERED=1
 
 if [[ " $* " == *" --book-align "* || \
       " $* " == *" --book-pick "* || \
+      " $* " == *" --book-place "* || \
+      " $* " == *" --book-pick-place "* || \
+      " $* " == *" --stage1-loop "* || \
       " $* " == *" --cart-perception "* || \
       " $* " == *" --cart-scan-navigation "* || \
       " $* " == *" --cart-approach-navigation "* ]]; then

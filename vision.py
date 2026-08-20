@@ -11,6 +11,7 @@ from cv_bridge import CvBridge
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image, JointState
+from std_msgs.msg import Float64MultiArray
 
 from book_frame import detect_book_frame
 from book_geometry import CameraIntrinsics, decode_bbox_rle
@@ -98,6 +99,11 @@ class Vision:
         self.merged_pub = node.create_publisher(
             JointState, MERGED_JOINT_STATES_TOPIC, 10
         )
+        self.head_command_pub = node.create_publisher(
+            Float64MultiArray,
+            "/head_forward_position_controller/commands",
+            10,
+        )
         node.create_timer(0.05, self._publish_merged_joints)
         self.debug_path = Path(__file__).resolve().parent / "logs" / "last_detection.jpg"
         self.debug_path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,6 +178,36 @@ class Vision:
         if not all(name in self.joints for name in RIGHT_ARM_JOINTS):
             return None
         return {name: self.joints[name] for name in RIGHT_ARM_JOINTS}
+
+    def set_head_pose(self, *, yaw_rad, pitch_rad=0.25, timeout_s=3.0):
+        """Move the head to one scan pose and wait until feedback reaches it."""
+
+        message = Float64MultiArray()
+        message.data = [float(yaw_rad), float(pitch_rad)]
+        deadline = time.monotonic() + float(timeout_s)
+        while rclpy.ok() and time.monotonic() < deadline:
+            self.head_command_pub.publish(message)
+            rclpy.spin_once(self.node, timeout_sec=0.10)
+            if (
+                abs(self.joints.get("joint_head0", 99.0) - float(yaw_rad)) <= 0.02
+                and abs(self.joints.get("joint_head1", 99.0) - float(pitch_rad)) <= 0.02
+            ):
+                return True
+        raise RuntimeError("头部没有到达书桌扫描角度")
+
+    def scan_books_to_robot_right(self, angles_deg=(30, 45, 60, 75)):
+        """Scan toward the table without rotating the chassis."""
+
+        books = []
+        try:
+            for angle_deg in angles_deg:
+                self.set_head_pose(yaw_rad=-np.deg2rad(float(angle_deg)))
+                detected = self.find("book", frame="base_link")
+                if detected:
+                    books.extend(detected)
+        finally:
+            self.set_head_pose(yaw_rad=0.0)
+        return tuple(books)
 
     def _save_debug_overlay(self, color, books):
         overlay = color.copy()
@@ -505,6 +541,27 @@ class Vision:
                 self.node.get_logger().warning(f"小推车检测帧不能用: {error}")
                 print(f"[视觉] 小推车检测帧不能用: {type(error).__name__}: {error}")
         return None
+
+    def find_cart_samples(self, *, successful_samples=3, maximum_attempts=5):
+        """Collect several independent cart/platform measurements."""
+
+        def report(attempt, success_count, found):
+            if found:
+                print(
+                    f"[视觉] 推车稳定采样 {success_count}/{successful_samples} "
+                    f"(尝试 {attempt}/{maximum_attempts})"
+                )
+            else:
+                print(
+                    f"[视觉] 推车第 {attempt}/{maximum_attempts} 次没有结果，继续"
+                )
+
+        return collect_successful_results(
+            self.find_cart,
+            successful_samples=successful_samples,
+            maximum_attempts=maximum_attempts,
+            on_attempt=report,
+        )
 
     def find(self, target="book", frame="map"):
         if target != "book":

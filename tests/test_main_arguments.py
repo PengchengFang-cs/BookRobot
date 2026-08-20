@@ -79,6 +79,20 @@ class MainArgumentTests(unittest.TestCase):
         )
         self.assertIn(" --cart-approach-navigation ", run_script)
 
+    def test_accepts_place_and_combined_pipeline_modes(self):
+        with patch.object(sys, "argv", ["main.py", "--book-place", "--book-index", "3"]):
+            place = arguments()
+        self.assertTrue(place.book_place)
+        self.assertEqual(place.book_index, 3)
+
+        with patch.object(sys, "argv", ["main.py", "--book-pick-place"]):
+            combined = arguments()
+        self.assertTrue(combined.book_pick_place)
+
+        with patch.object(sys, "argv", ["main.py", "--stage1-loop"]):
+            loop = arguments()
+        self.assertTrue(loop.stage1_loop)
+
     def test_accepts_explicit_coarse_positioning_for_pick(self):
         with patch.object(
             sys,

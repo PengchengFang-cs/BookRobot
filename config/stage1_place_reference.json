@@ -1,0 +1,38 @@
+{
+  "asset_id": "S1_CART_PLACE_BOOK",
+  "reference_frame_index": 0,
+  "placed_frame_index": 387,
+  "recorded_torso_m": 0.19999995442219914,
+  "recorded_head_rad": [
+    0.0003601923480223146,
+    0.24972170937534868
+  ],
+  "platform_front_edge_base_m": [
+    0.7712600586305836,
+    -0.25538493053512146,
+    0.5374484692774412
+  ],
+  "platform_left_edge_base_m": [
+    0.9301356820329004,
+    0.1401925810658876,
+    0.5374484692774412
+  ],
+  "platform_right_edge_base_m": [
+    0.9847505911167418,
+    -0.6243630110964171,
+    0.5374484692774412
+  ],
+  "platform_forward_axis_base": [
+    0.9974583479339757,
+    0.07125197637135086,
+    0.0
+  ],
+  "platform_lateral_axis_base": [
+    -0.07125197637135086,
+    0.9974583479339757,
+    0.0
+  ],
+  "platform_width_m": 0.7665037780734605,
+  "platform_depth_m": 0.3733149927109766,
+  "recorded_book_offset_from_left_m": 0.17
+}

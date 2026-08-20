@@ -9,7 +9,9 @@ from geometry import fruit_from_text
 from mission import (
     run_book_alignment_from_current_once,
     run_book_alignment_once,
+    run_book_pick_place_once,
     run_book_pick_once,
+    run_book_place_once,
     run_one_fruit,
 )
 
@@ -55,6 +57,21 @@ def arguments():
         "--book-pick",
         action="store_true",
         help="检测、对位并执行一次 Stage-1 DataReplay 吸书",
+    )
+    operation.add_argument(
+        "--book-place",
+        action="store_true",
+        help="从当前推车粗定位位置多轮对位并执行一次Place 2.4",
+    )
+    operation.add_argument(
+        "--book-pick-place",
+        action="store_true",
+        help="连续执行抓书、推车粗导航、精定位和Place 2.4",
+    )
+    operation.add_argument(
+        "--stage1-loop",
+        action="store_true",
+        help="连续完成五本书的抓取、放置与返回书桌粗导航",
     )
     operation.add_argument(
         "--cart-perception",
@@ -119,13 +136,25 @@ def run_real(args):
         if (
             args.book_align
             or args.book_pick
+            or args.book_place
+            or args.book_pick_place
+            or args.stage1_loop
             or args.cart_perception
             or args.cart_scan_navigation
             or args.cart_approach_navigation
         ):
-            from book_navigation import BookAlignmentNavigator, Stage1CartNavigator
-            from config import REPLAY_PICK_REFERENCE_PATH
+            from book_navigation import (
+                BookAlignmentNavigator,
+                CartPlaceDockingNavigator,
+                Stage1CartNavigator,
+                Stage1TableReturnNavigator,
+            )
+            from config import (
+                REPLAY_PICK_REFERENCE_PATH,
+                REPLAY_PLACE_REFERENCE_PATH,
+            )
             from replay_pick_reference import load_replay_pick_reference
+            from replay_place_reference import load_replay_place_reference
             from tf2_ros import Buffer, TransformListener
 
             tf_buffer = Buffer()
@@ -202,7 +231,71 @@ def run_real(args):
                     timeout_s=0.5,
                 ),
             )
-            if args.book_pick:
+            if args.stage1_loop:
+                from book_pick_replay import Stage1BookPickReplayer
+                from book_place_replay import Stage1BookPlaceReplayer
+
+                pick_reference = load_replay_pick_reference(
+                    REPLAY_PICK_REFERENCE_PATH
+                )
+                place_reference = load_replay_place_reference(
+                    REPLAY_PLACE_REFERENCE_PATH
+                )
+                for book_index in range(1, 6):
+                    say(f"Stage 1 第 {book_index}/5 本")
+                    run_book_pick_place_once(
+                        vision,
+                        BookAlignmentNavigator(mode=args.book_align_mode),
+                        Stage1BookPickReplayer(**feedback),
+                        pick_reference,
+                        Stage1CartNavigator(
+                            vision=vision,
+                            book_index=book_index,
+                        ),
+                        CartPlaceDockingNavigator(),
+                        Stage1BookPlaceReplayer(**feedback),
+                        place_reference,
+                        slot_index=book_index,
+                        coarse=(args.book_coarse and book_index == 1),
+                        press_m=args.book_pick_press_mm / 1000.0,
+                        say=say,
+                    )
+                    if book_index < 5:
+                        say("扫描右侧书桌并沿直角路线返回下一轮抓书位置")
+                        Stage1TableReturnNavigator(vision=vision).navigate()
+            elif args.book_place:
+                from book_place_replay import Stage1BookPlaceReplayer
+
+                run_book_place_once(
+                    vision,
+                    CartPlaceDockingNavigator(),
+                    Stage1BookPlaceReplayer(**feedback),
+                    load_replay_place_reference(REPLAY_PLACE_REFERENCE_PATH),
+                    slot_index=args.book_index,
+                    say=say,
+                )
+            elif args.book_pick_place:
+                from book_pick_replay import Stage1BookPickReplayer
+                from book_place_replay import Stage1BookPlaceReplayer
+
+                run_book_pick_place_once(
+                    vision,
+                    BookAlignmentNavigator(mode=args.book_align_mode),
+                    Stage1BookPickReplayer(**feedback),
+                    load_replay_pick_reference(REPLAY_PICK_REFERENCE_PATH),
+                    Stage1CartNavigator(
+                        vision=vision,
+                        book_index=args.book_index,
+                    ),
+                    CartPlaceDockingNavigator(),
+                    Stage1BookPlaceReplayer(**feedback),
+                    load_replay_place_reference(REPLAY_PLACE_REFERENCE_PATH),
+                    slot_index=args.book_index,
+                    coarse=args.book_coarse,
+                    press_m=args.book_pick_press_mm / 1000.0,
+                    say=say,
+                )
+            elif args.book_pick:
                 from book_pick_replay import Stage1BookPickReplayer
 
                 navigator = BookAlignmentNavigator(mode=args.book_align_mode)

@@ -16,6 +16,8 @@ CART_TURN_CLEARANCE_RETREAT_M = 0.20
 CART_ROUTE_MAX_SEGMENT_M = 0.20
 CART_SCAN_STEP_RAD = math.radians(15.0)
 CART_SCAN_STEPS = 6
+CART_PLACE_YAW_FIRST_RAD = math.radians(0.5)
+TABLE_RETURN_SCAN_ANGLES_DEG = (30, 45, 60, 75)
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,17 @@ class CartVisualNavigationExecution:
     slot_center_origin_m: tuple[float, float, float]
     platform_near_x_origin_m: float
     selected_scan_debug_image: str | None
+
+
+@dataclass(frozen=True)
+class TableReturnNavigationExecution:
+    command_count: int
+    mode: str
+    odom_dx_m: float
+    odom_dy_m: float
+    imu_dyaw_rad: float
+    selected_book_point_m: tuple[float, float, float]
+    table_leg_m: float
 
 
 def _normalize_yaw(value):
@@ -149,6 +162,54 @@ class BookAlignmentNavigator:
             return BookAlignmentExecution(
                 command_count=len(commands),
                 mode=self.mode,
+                odom_dx_m=float(pose.x),
+                odom_dy_m=float(pose.y),
+                imu_dyaw_rad=float(pose.yaw),
+            )
+        finally:
+            adapter.stop()
+
+
+class CartPlaceDockingNavigator:
+    """Apply one replay-platform correction; yaw is corrected in its own round."""
+
+    def __init__(self, runtime=None):
+        self.runtime = runtime
+
+    def align(self, target):
+        if self.runtime is None:
+            self.runtime = load_navnav_runtime()
+        adapter = self.runtime.WandaRos2Adapter()
+        try:
+            adapter.preflight()
+            starting_yaw = adapter.current_absolute_imu_yaw()
+            adapter.capture_task_origin()
+            if abs(float(target.yaw_error_rad)) > CART_PLACE_YAW_FIRST_RAD:
+                adapter.correct_absolute_imu_yaw(
+                    target_yaw_rad=starting_yaw + float(target.yaw_error_rad),
+                    tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
+                )
+                command_count = 1
+                mode = "cart-place-yaw"
+            else:
+                commands = _build_vector_commands(
+                    self.runtime,
+                    target.reference_anchor_m,
+                    target.observed_anchor_m,
+                )
+                for command in commands:
+                    adapter.execute_command(command, precision_mode=True)
+                if commands:
+                    adapter.correct_absolute_imu_yaw(
+                        target_yaw_rad=starting_yaw,
+                        tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
+                    )
+                command_count = len(commands)
+                mode = "cart-place-xy"
+            pose = adapter.current_task_pose()
+            return BookAlignmentExecution(
+                command_count=command_count,
+                mode=mode,
                 odom_dx_m=float(pose.x),
                 odom_dy_m=float(pose.y),
                 imu_dyaw_rad=float(pose.yaw),
@@ -346,6 +407,86 @@ class Stage1CartNavigator:
                 slot_center_origin_m=slot_center,
                 platform_near_x_origin_m=platform_near_x,
                 selected_scan_debug_image=selected_debug_image,
+            )
+        finally:
+            adapter.stop()
+
+
+class Stage1TableReturnNavigator:
+    """Return from the cart to the table using the inverse right-angle route."""
+
+    def __init__(self, runtime=None, *, vision=None):
+        self.runtime = runtime
+        self.vision = vision
+
+    def navigate(self):
+        if self.vision is None:
+            raise RuntimeError("table return requires live book vision")
+        books = tuple(
+            self.vision.scan_books_to_robot_right(TABLE_RETURN_SCAN_ANGLES_DEG)
+        )
+        if not books:
+            raise RuntimeError("30/45/60/75度扫描没有找到书桌上的书")
+        selected = min(books, key=lambda book: float(book.suction_point[1]))
+        point = tuple(float(value) for value in selected.suction_point)
+        from book_alignment import COARSE_APPROACH_REFERENCE_BASE_M
+
+        table_leg = float(COARSE_APPROACH_REFERENCE_BASE_M[1]) - point[1]
+        if self.runtime is None:
+            self.runtime = load_navnav_runtime()
+        adapter = self.runtime.WandaRos2Adapter()
+        commands_sent = 0
+        try:
+            adapter.preflight()
+            starting_yaw = adapter.current_absolute_imu_yaw()
+            adapter.capture_task_origin()
+            route = (
+                self.runtime.MappedMotionCommand(
+                    self.runtime.WandaCommandKind.DRIVE_BACKWARD,
+                    CART_TURN_CLEARANCE_RETREAT_M,
+                    "XY",
+                ),
+                self.runtime.MappedMotionCommand(
+                    self.runtime.WandaCommandKind.SPIN, -math.pi / 2.0, "Y"
+                ),
+            )
+            for command in route:
+                adapter.execute_command(command, precision_mode=True)
+                commands_sent += 1
+            kind = (
+                self.runtime.WandaCommandKind.DRIVE_FORWARD
+                if table_leg >= 0.0
+                else self.runtime.WandaCommandKind.DRIVE_BACKWARD
+            )
+            for command in _distance_commands(self.runtime, kind, abs(table_leg)):
+                adapter.execute_command(command, precision_mode=True)
+                commands_sent += 1
+            finish = (
+                self.runtime.MappedMotionCommand(
+                    self.runtime.WandaCommandKind.SPIN, math.pi / 2.0, "Y"
+                ),
+                self.runtime.MappedMotionCommand(
+                    self.runtime.WandaCommandKind.DRIVE_FORWARD,
+                    CART_TURN_CLEARANCE_RETREAT_M,
+                    "XY",
+                ),
+            )
+            for command in finish:
+                adapter.execute_command(command, precision_mode=True)
+                commands_sent += 1
+            adapter.correct_absolute_imu_yaw(
+                target_yaw_rad=starting_yaw,
+                tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
+            )
+            pose = adapter.current_task_pose()
+            return TableReturnNavigationExecution(
+                command_count=commands_sent,
+                mode="table-visual-manhattan-coarse",
+                odom_dx_m=float(pose.x),
+                odom_dy_m=float(pose.y),
+                imu_dyaw_rad=float(pose.yaw),
+                selected_book_point_m=point,
+                table_leg_m=table_leg,
             )
         finally:
             adapter.stop()

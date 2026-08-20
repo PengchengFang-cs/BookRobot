@@ -106,6 +106,9 @@ BOOK_MAX_RESULTS = 5
 REPLAY_PICK_REFERENCE_PATH = (
     Path(__file__).resolve().parent / "config" / "stage1_pick_reference.json"
 )
+REPLAY_PLACE_REFERENCE_PATH = (
+    Path(__file__).resolve().parent / "config" / "stage1_place_reference.json"
+)
 
 
 # 导航：水果约在一米外，机器人停在水果前方，让机械臂还留有空间。

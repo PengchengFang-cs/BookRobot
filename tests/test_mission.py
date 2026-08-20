@@ -4,11 +4,13 @@ from unittest.mock import patch
 
 from book_geometry import BookGeometry
 from mission import (
+    run_book_place_once,
     run_book_alignment_from_current_once,
     run_book_alignment_once,
     run_book_pick_once,
     run_one_fruit,
 )
+from replay_place_reference import ReplayPlaceReference
 from replay_pick_reference import ReplayPickReference
 
 
@@ -99,6 +101,37 @@ class _PickReplayer:
         )
 
 
+class _CartVision:
+    def __init__(self, groups):
+        self.groups = iter(groups)
+
+    def find_cart_samples(self, **_kwargs):
+        return next(self.groups)
+
+
+class _CartNavigator:
+    def __init__(self):
+        self.targets = []
+
+    def align(self, target):
+        self.targets.append(target)
+        return _nav_result(target.residual_m[0], target.residual_m[1])
+
+
+class _PlaceReplayer:
+    def __init__(self):
+        self.calls = 0
+
+    def place(self):
+        self.calls += 1
+        return SimpleNamespace(
+            frames_sent=388,
+            torso_target_m=0.2,
+            torso_actual_m=0.2,
+            d01_released=True,
+        )
+
+
 def _nav_result(dx, dy, yaw=0.0):
     return SimpleNamespace(
         command_count=2,
@@ -137,6 +170,34 @@ def _reference():
         recorded_book_short_extent_m=0.20,
         hdf5_sha256="a" * 64,
     )
+
+
+def _place_reference():
+    return ReplayPlaceReference(
+        asset_id="S1_CART_PLACE_BOOK",
+        reference_frame_index=0,
+        placed_frame_index=387,
+        recorded_torso_m=0.2,
+        recorded_head_rad=(0.0, 0.25),
+        platform_front_edge_base_m=(0.77, -0.25, 0.54),
+        platform_left_edge_base_m=(0.95, 0.15, 0.54),
+        platform_right_edge_base_m=(0.95, -0.60, 0.54),
+        platform_forward_axis_base=(1.0, 0.0, 0.0),
+        platform_lateral_axis_base=(0.0, 1.0, 0.0),
+        platform_width_m=0.75,
+        platform_depth_m=0.37,
+        recorded_book_offset_from_left_m=0.17,
+    )
+
+
+def _cart(front_x, slot_y):
+    platform = SimpleNamespace(
+        front_edge=(front_x, -0.25, 0.54),
+        forward_axis=(1.0, 0.0, 0.0),
+        lateral_axis_right_to_left=(0.0, 1.0, 0.0),
+        slot_centers=((front_x, slot_y, 0.54),) * 5,
+    )
+    return SimpleNamespace(platform=platform)
 
 
 class MissionMultiBookTests(unittest.TestCase):
@@ -400,6 +461,48 @@ class BookAlignmentMissionTests(unittest.TestCase):
         self.assertEqual(len(vision.calls), 3)
         self.assertAlmostEqual(result.final.residual_m[0], 0.001)
         self.assertAlmostEqual(result.final.residual_m[1], 0.002)
+
+
+class CartPlaceMissionTests(unittest.TestCase):
+    def test_repeats_cart_measurement_then_replays_place(self):
+        initial = tuple(_cart(0.82 + jitter, 0.03) for jitter in (-0.001, 0.0, 0.001))
+        final = tuple(_cart(0.77 + jitter, -0.02) for jitter in (-0.001, 0.0, 0.001))
+        vision = _CartVision((initial, final))
+        navigator = _CartNavigator()
+        replayer = _PlaceReplayer()
+
+        result = run_book_place_once(
+            vision,
+            navigator,
+            replayer,
+            _place_reference(),
+            slot_index=1,
+            say=lambda _message: None,
+        )
+
+        self.assertEqual(len(navigator.targets), 1)
+        self.assertEqual(replayer.calls, 1)
+        self.assertTrue(result.alignment.within_tolerance)
+        self.assertEqual(result.replay.frames_sent, 388)
+
+    def test_does_not_replay_when_corrections_never_converge(self):
+        bad = tuple(_cart(0.90, 0.10) for _ in range(3))
+        vision = _CartVision((bad, bad, bad, bad, bad))
+        navigator = _CartNavigator()
+        replayer = _PlaceReplayer()
+
+        with self.assertRaisesRegex(RuntimeError, "Place 最终对位未达标"):
+            run_book_place_once(
+                vision,
+                navigator,
+                replayer,
+                _place_reference(),
+                slot_index=1,
+                say=lambda _message: None,
+            )
+
+        self.assertEqual(len(navigator.targets), 4)
+        self.assertEqual(replayer.calls, 0)
 
 
 if __name__ == "__main__":
