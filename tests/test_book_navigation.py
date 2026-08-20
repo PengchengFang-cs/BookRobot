@@ -28,6 +28,7 @@ class _Adapter:
         self.stopped = False
         self.origin_calls = 0
         self.yaw_corrections = []
+        self.refresh_calls = 0
 
     def preflight(self):
         self.preflight_calls += 1
@@ -49,6 +50,9 @@ class _Adapter:
 
     def current_absolute_imu_yaw(self):
         return self.runtime.absolute_yaw
+
+    def refresh_feedback(self):
+        self.refresh_calls += 1
 
     def correct_absolute_imu_yaw(self, **kwargs):
         self.yaw_corrections.append(kwargs)
@@ -430,6 +434,7 @@ class BookNavigationTests(unittest.TestCase):
         self.assertEqual(result.mode, "cart-scan-only")
         self.assertEqual(result.command_count, CART_SCAN_STEPS)
         self.assertEqual([row.kind for row in commands], ["spin"] * 6)
+        self.assertEqual(runtime.adapter.refresh_calls, CART_SCAN_STEPS)
         self.assertTrue(all(
             math.isclose(row.value, CART_SCAN_STEP_RAD) for row in commands
         ))

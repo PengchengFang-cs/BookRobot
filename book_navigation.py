@@ -250,6 +250,7 @@ class Stage1CartMapNavigator:
                 commands_sent += 1
 
             for step in range(1, CART_SCAN_STEPS + 1):
+                adapter.refresh_feedback()
                 turn = self.runtime.MappedMotionCommand(
                     self.runtime.WandaCommandKind.SPIN,
                     CART_SCAN_STEP_RAD,

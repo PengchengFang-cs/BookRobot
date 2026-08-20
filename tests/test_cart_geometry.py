@@ -4,10 +4,22 @@ import numpy as np
 
 from book_geometry import CameraIntrinsics
 from book_rpc import SceneMask
-from cart_geometry import reconstruct_cart_platform
+from cart_geometry import reconstruct_cart_platform, select_leftmost_cart_platform
 
 
 class CartGeometryTests(unittest.TestCase):
+    def test_selects_left_cart_plane_instead_of_higher_confidence_table(self):
+        table = type("Platform", (), {
+            "center": (1.0, -0.2, 0.7),
+            "confidence": 0.90,
+        })()
+        cart = type("Platform", (), {
+            "center": (1.2, 0.8, 0.7),
+            "confidence": 0.49,
+        })()
+
+        self.assertIs(select_leftmost_cart_platform((table, cart)), cart)
+
     def test_divides_platform_into_five_right_to_left_slots(self):
         observation = SceneMask(
             semantic_class="cart_platform",

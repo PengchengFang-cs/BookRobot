@@ -15,7 +15,11 @@ from sensor_msgs.msg import CameraInfo, Image, JointState
 from book_frame import detect_book_frame
 from book_geometry import CameraIntrinsics, decode_bbox_rle
 from book_rpc import BookVisionClient
-from cart_geometry import CartGeometryError, reconstruct_cart_platform
+from cart_geometry import (
+    CartGeometryError,
+    reconstruct_cart_platform,
+    select_leftmost_cart_platform,
+)
 from config import (
     BODY_JOINT_STATES_TOPIC,
     CAMERA_INFO_TOPIC,
@@ -257,12 +261,12 @@ class Vision:
         )
         if not observations:
             return None
-        platform = None
+        platform_candidates = []
         for observation in observations:
             if observation.semantic_class != "cart_platform":
                 continue
             try:
-                platform = reconstruct_cart_platform(
+                platform_candidates.append(reconstruct_cart_platform(
                     observation=observation,
                     depth_m=depth,
                     intrinsics=CameraIntrinsics(
@@ -274,10 +278,10 @@ class Vision:
                     camera_to_base=lambda point: camera_point_to_base(
                         point, body, head_yaw, head_pitch
                     ),
-                )
-                break
+                ))
             except CartGeometryError as error:
                 print(f"[视觉] 小推车顶面几何不可用: {error}")
+        platform = select_leftmost_cart_platform(platform_candidates)
         self._save_cart_debug_overlay(color, observations, platform)
         return LocatedCart(
             observations=tuple(observations),

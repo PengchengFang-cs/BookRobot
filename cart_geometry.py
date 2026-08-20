@@ -26,6 +26,15 @@ class CartPlatformGeometry:
     confidence: float
 
 
+def select_leftmost_cart_platform(platforms):
+    """Choose the cart-side plane when a table is also labelled as a platform."""
+
+    candidates = tuple(platform for platform in platforms if platform is not None)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda platform: float(platform.center[1]))
+
+
 def _fail(code):
     raise CartGeometryError(code)
 
