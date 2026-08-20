@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import importlib
 import math
 from pathlib import Path
+import shutil
 import sys
 from types import SimpleNamespace
 
@@ -41,6 +42,7 @@ class CartVisualNavigationExecution:
     slot_index: int
     slot_center_origin_m: tuple[float, float, float]
     platform_near_x_origin_m: float
+    selected_scan_debug_image: str | None
 
 
 def _normalize_yaw(value):
@@ -238,15 +240,16 @@ class Stage1CartMapNavigator:
             adapter.preflight()
             starting_yaw = adapter.current_absolute_imu_yaw()
             adapter.capture_task_origin()
-            retreat = self.runtime.MappedMotionCommand(
-                self.runtime.WandaCommandKind.DRIVE_BACKWARD,
-                CART_TURN_CLEARANCE_RETREAT_M,
-                "XY",
-            )
-            adapter.execute_command(retreat, precision_mode=True)
-            commands_sent += 1
+            if not self.scan_only:
+                retreat = self.runtime.MappedMotionCommand(
+                    self.runtime.WandaCommandKind.DRIVE_BACKWARD,
+                    CART_TURN_CLEARANCE_RETREAT_M,
+                    "XY",
+                )
+                adapter.execute_command(retreat, precision_mode=True)
+                commands_sent += 1
 
-            for _step in range(CART_SCAN_STEPS):
+            for step in range(1, CART_SCAN_STEPS + 1):
                 turn = self.runtime.MappedMotionCommand(
                     self.runtime.WandaCommandKind.SPIN,
                     CART_SCAN_STEP_RAD,
@@ -259,12 +262,15 @@ class Stage1CartMapNavigator:
                 if cart is None or cart.platform is None:
                     continue
                 platform = transform_cart_platform_to_origin(cart.platform, pose)
-                candidates.append((platform.confidence, float(pose.yaw), platform))
+                debug_image = _preserve_cart_scan_image(self.vision, step)
+                candidates.append(
+                    (platform.confidence, float(pose.yaw), platform, debug_image)
+                )
 
             pose = adapter.current_task_pose()
             if not candidates:
                 raise RuntimeError("旋转90度期间没有获得可用的小推车顶面")
-            _confidence, selected_scan_yaw, platform = max(
+            _confidence, selected_scan_yaw, platform, selected_debug_image = max(
                 candidates,
                 key=lambda row: row[0],
             )
@@ -282,6 +288,7 @@ class Stage1CartMapNavigator:
                     slot_index=self.book_index,
                     slot_center_origin_m=slot_center,
                     platform_near_x_origin_m=platform_near_x,
+                    selected_scan_debug_image=selected_debug_image,
                 )
 
             lateral_delta = float(slot_center[1]) - float(pose.y)
@@ -337,6 +344,7 @@ class Stage1CartMapNavigator:
                 slot_index=self.book_index,
                 slot_center_origin_m=slot_center,
                 platform_near_x_origin_m=platform_near_x,
+                selected_scan_debug_image=selected_debug_image,
             )
         finally:
             adapter.stop()
@@ -349,6 +357,21 @@ def _rotate_xy(value, yaw):
         cosine * float(value[0]) - sine * float(value[1]),
         sine * float(value[0]) + cosine * float(value[1]),
     )
+
+
+def _preserve_cart_scan_image(vision, step):
+    source_value = getattr(vision, "debug_path", None)
+    if source_value is None:
+        return None
+    source = Path(source_value)
+    if not source.is_file():
+        return None
+    angle_deg = int(step) * 15
+    destination = source.with_name(
+        f"cart_scan_{angle_deg:03d}{source.suffix or '.jpg'}"
+    )
+    shutil.copyfile(source, destination)
+    return str(destination)
 
 
 def transform_cart_platform_to_origin(platform, pose):

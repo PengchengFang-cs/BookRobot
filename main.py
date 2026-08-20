@@ -82,7 +82,7 @@ def arguments():
     operation.add_argument(
         "--cart-scan-navigation",
         action="store_true",
-        help="不拿书：后退20cm并每15度扫描一次，旋转到90度后停止",
+        help="不拿书、不平移：原地每15度扫描一次，左转到90度后停止",
     )
     parser.add_argument(
         "--book-align-mode",
@@ -189,7 +189,7 @@ def run_real(args):
                     "slot_index": navigation.slot_index,
                     "slot_center_origin_m": navigation.slot_center_origin_m,
                     "platform_near_x_origin_m": navigation.platform_near_x_origin_m,
-                    "debug_image": str(vision.debug_path),
+                    "debug_image": navigation.selected_scan_debug_image,
                 }, ensure_ascii=False))
                 return
 

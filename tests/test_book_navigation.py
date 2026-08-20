@@ -1,4 +1,5 @@
 import math
+from pathlib import Path
 import unittest
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
@@ -387,7 +388,7 @@ class BookNavigationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "between 1 and 4"):
             build_cart_final_forward_commands(runtime, dx_m, 5)
 
-    def test_cart_scan_only_retreats_and_samples_every_fifteen_degrees(self):
+    def test_cart_scan_only_stays_in_place_and_samples_every_fifteen_degrees(self):
         scan_poses = tuple(
             (-0.2, 0.0, CART_SCAN_STEP_RAD * index)
             for index in range(1, CART_SCAN_STEPS + 1)
@@ -403,23 +404,34 @@ class BookNavigationTests(unittest.TestCase):
             )
             for index, pose in enumerate(scan_poses, 1)
         ]
-        vision = SimpleNamespace(find_cart=lambda: carts.pop(0))
+        with TemporaryDirectory() as root:
+            debug_path = Path(root) / "last_detection.jpg"
 
-        result = Stage1CartMapNavigator(
-            runtime,
-            vision=vision,
-            book_index=2,
-            scan_only=True,
-        ).navigate()
+            def find_cart():
+                sample_number = CART_SCAN_STEPS - len(carts) + 1
+                debug_path.write_bytes(str(sample_number).encode("ascii"))
+                return carts.pop(0)
+
+            vision = SimpleNamespace(
+                find_cart=find_cart,
+                debug_path=debug_path,
+            )
+            result = Stage1CartMapNavigator(
+                runtime,
+                vision=vision,
+                book_index=2,
+                scan_only=True,
+            ).navigate()
+            selected_path = Path(result.selected_scan_debug_image)
+            self.assertEqual(selected_path.name, "cart_scan_045.jpg")
+            self.assertEqual(selected_path.read_bytes(), b"3")
 
         commands = [row for row, _precision in runtime.adapter.executed]
         self.assertEqual(result.mode, "cart-scan-only")
-        self.assertEqual(result.command_count, 1 + CART_SCAN_STEPS)
-        self.assertEqual(commands[0].kind, runtime.WandaCommandKind.DRIVE_BACKWARD)
-        self.assertAlmostEqual(commands[0].value, CART_TURN_CLEARANCE_RETREAT_M)
-        self.assertEqual([row.kind for row in commands[1:]], ["spin"] * 6)
+        self.assertEqual(result.command_count, CART_SCAN_STEPS)
+        self.assertEqual([row.kind for row in commands], ["spin"] * 6)
         self.assertTrue(all(
-            math.isclose(row.value, CART_SCAN_STEP_RAD) for row in commands[1:]
+            math.isclose(row.value, CART_SCAN_STEP_RAD) for row in commands
         ))
         self.assertAlmostEqual(result.selected_scan_yaw_rad, math.radians(45.0))
         self.assertEqual(result.slot_index, 2)
@@ -499,7 +511,8 @@ class BookNavigationTests(unittest.TestCase):
             Stage1CartMapNavigator(runtime, vision=vision, scan_only=True).navigate()
 
         commands = [row for row, _precision in runtime.adapter.executed]
-        self.assertEqual(len(commands), 1 + CART_SCAN_STEPS)
+        self.assertEqual(len(commands), CART_SCAN_STEPS)
+        self.assertEqual([row.kind for row in commands], ["spin"] * 6)
         self.assertTrue(runtime.adapter.stopped)
 
 
