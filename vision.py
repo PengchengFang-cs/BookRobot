@@ -383,6 +383,14 @@ class Vision:
                 continue
             snapshot, joints = selected
             self.last_capture_ns = snapshot.captured_at_ns
+            raw_color = self.bridge.imgmsg_to_cv2(
+                snapshot.color,
+                desired_encoding="bgr8",
+            )
+            raw_path = self.debug_path.with_name(
+                f"cart_raw_{int(scan_angle_deg):03d}.jpg"
+            )
+            cv2.imwrite(str(raw_path), raw_color)
             return CapturedCartFrame(
                 snapshot=snapshot,
                 joints=dict(joints),
@@ -401,22 +409,29 @@ class Vision:
             debug_path = self.debug_path.with_name(
                 f"cart_scan_{frame.scan_angle_deg:03d}.jpg"
             )
-            try:
-                return self._detect_cart_once(
-                    frame.snapshot,
-                    frame.joints,
-                    rpc_captured_at_ns=time.time_ns(),
-                    debug_path=debug_path,
-                )
-            except Exception as error:
-                self.node.get_logger().warning(
-                    f"小推车并行检测帧不能用: {error}"
-                )
-                print(
-                    "[视觉] 小推车并行检测帧不能用: "
-                    f"{type(error).__name__}: {error}"
-                )
-                return None
+            last_error = None
+            for attempt in range(1, 4):
+                try:
+                    return self._detect_cart_once(
+                        frame.snapshot,
+                        frame.joints,
+                        rpc_captured_at_ns=time.time_ns(),
+                        debug_path=debug_path,
+                    )
+                except Exception as error:
+                    last_error = error
+                    if attempt < 3:
+                        time.sleep(0.2 * attempt)
+            cause = getattr(last_error, "__cause__", None)
+            detail = f"; cause={cause}" if cause is not None else ""
+            self.node.get_logger().warning(
+                f"小推车并行检测帧三次失败: {last_error}{detail}"
+            )
+            print(
+                "[视觉] 小推车并行检测帧三次失败: "
+                f"{type(last_error).__name__}: {last_error}{detail}"
+            )
+            return None
 
         results = [None] * len(frames)
         with ThreadPoolExecutor(max_workers=len(frames)) as executor:
