@@ -14,6 +14,8 @@ VECTOR_FINAL_YAW_TOLERANCE_RAD = math.radians(0.15)
 VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M = 0.010
 RETURN_TABLE_MAP_POSE = (2.857213, -2.520253, math.radians(-1.920977))
 CART_FRONT_MAP_POSE = (3.411691, -1.647823, math.radians(-1.558860))
+CART_TURN_CLEARANCE_RETREAT_M = 0.20
+CART_ROUTE_MAX_SEGMENT_M = 0.20
 
 
 @dataclass(frozen=True)
@@ -156,14 +158,73 @@ def cart_transition_body_delta(
 
 
 class Stage1CartMapNavigator:
-    """Move from the reviewed return-table point to the reviewed cart point."""
+    """Follow an axis-aligned table-to-cart route with turn clearance."""
 
-    def __init__(self, navigator=None):
-        self.navigator = navigator or BookAlignmentNavigator(mode="vector")
+    def __init__(self, runtime=None):
+        self.runtime = runtime
 
     def navigate(self):
+        if self.runtime is None:
+            self.runtime = load_navnav_runtime()
+        adapter = self.runtime.WandaRos2Adapter()
         dx_m, dy_m = cart_transition_body_delta()
-        return self.navigator.align(
-            reference=(0.0, 0.0, 0.0),
-            observed=(dx_m, dy_m, 0.0),
-        )
+        commands = build_cart_manhattan_commands(self.runtime, dx_m, dy_m)
+        try:
+            adapter.preflight()
+            starting_yaw = adapter.current_absolute_imu_yaw()
+            adapter.capture_task_origin()
+            for command in commands:
+                adapter.execute_command(command, precision_mode=True)
+            adapter.correct_absolute_imu_yaw(
+                target_yaw_rad=starting_yaw,
+                tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
+            )
+            pose = adapter.current_task_pose()
+            return BookAlignmentExecution(
+                command_count=len(commands),
+                mode="map-manhattan",
+                odom_dx_m=float(pose.x),
+                odom_dy_m=float(pose.y),
+                imu_dyaw_rad=float(pose.yaw),
+            )
+        finally:
+            adapter.stop()
+
+
+def _distance_commands(runtime, kind, distance_m):
+    count = max(1, math.ceil(float(distance_m) / CART_ROUTE_MAX_SEGMENT_M))
+    segment = float(distance_m) / count
+    return tuple(
+        runtime.MappedMotionCommand(kind, segment, "XY")
+        for _ in range(count)
+    )
+
+
+def build_cart_manhattan_commands(runtime, dx_m, dy_m):
+    """Back away, move laterally on a 90-degree leg, then finish forward."""
+
+    commands = list(_distance_commands(
+        runtime,
+        runtime.WandaCommandKind.DRIVE_BACKWARD,
+        CART_TURN_CLEARANCE_RETREAT_M,
+    ))
+    lateral_turn = math.copysign(math.pi / 2.0, float(dy_m))
+    commands.append(
+        runtime.MappedMotionCommand(runtime.WandaCommandKind.SPIN, lateral_turn, "Y")
+    )
+    commands.extend(_distance_commands(
+        runtime,
+        runtime.WandaCommandKind.DRIVE_FORWARD,
+        abs(float(dy_m)),
+    ))
+    commands.append(
+        runtime.MappedMotionCommand(runtime.WandaCommandKind.SPIN, -lateral_turn, "Y")
+    )
+    forward_m = float(dx_m) + CART_TURN_CLEARANCE_RETREAT_M
+    forward_kind = (
+        runtime.WandaCommandKind.DRIVE_FORWARD
+        if forward_m >= 0.0
+        else runtime.WandaCommandKind.DRIVE_BACKWARD
+    )
+    commands.extend(_distance_commands(runtime, forward_kind, abs(forward_m)))
+    return tuple(commands)

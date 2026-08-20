@@ -78,6 +78,12 @@ def arguments():
         action="store_true",
         help="显式启用抓书前的远距离粗定位；默认直接恢复回放第0帧位置",
     )
+    parser.add_argument(
+        "--book-pick-press-mm",
+        type=float,
+        default=0.0,
+        help="薄书 Pick 相对录像额外下压毫米数；默认0",
+    )
     return parser.parse_args()
 
 
@@ -152,6 +158,7 @@ def run_real(args):
                         Stage1BookPlaceReplayer(**feedback),
                         say,
                         coarse=args.book_coarse,
+                        press_m=args.book_pick_press_mm / 1000.0,
                     )
                 else:
                     run_book_pick_once(
@@ -161,6 +168,7 @@ def run_real(args):
                         replay_reference,
                         say,
                         coarse=args.book_coarse,
+                        press_m=args.book_pick_press_mm / 1000.0,
                     )
             else:
                 navigator = BookAlignmentNavigator(mode=args.book_align_mode)

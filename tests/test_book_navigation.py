@@ -6,7 +6,10 @@ from unittest.mock import patch
 
 from book_navigation import (
     BookAlignmentNavigator,
+    CART_ROUTE_MAX_SEGMENT_M,
+    CART_TURN_CLEARANCE_RETREAT_M,
     Stage1CartMapNavigator,
+    build_cart_manhattan_commands,
     cart_transition_body_delta,
     load_navnav_runtime,
 )
@@ -276,18 +279,44 @@ class BookNavigationTests(unittest.TestCase):
         self.assertAlmostEqual(dy_m, 0.89052, places=4)
         self.assertAlmostEqual(math.hypot(dx_m, dy_m), 1.03372, places=4)
 
-    def test_cart_map_navigator_sends_one_relative_table_to_cart_move(self):
-        calls = []
-        expected = SimpleNamespace(command_count=3)
-        inner = SimpleNamespace(
-            align=lambda **kwargs: calls.append(kwargs) or expected
+    def test_cart_route_backs_up_then_uses_two_right_angle_legs(self):
+        runtime = _Runtime([])
+        dx_m, dy_m = cart_transition_body_delta()
+
+        commands = build_cart_manhattan_commands(runtime, dx_m, dy_m)
+
+        self.assertEqual(commands[0].kind, runtime.WandaCommandKind.DRIVE_BACKWARD)
+        self.assertAlmostEqual(commands[0].value, CART_TURN_CLEARANCE_RETREAT_M)
+        spins = [command for command in commands if command.kind == "spin"]
+        self.assertEqual([command.value for command in spins], [math.pi / 2, -math.pi / 2])
+        translations = [command for command in commands if command.kind != "spin"]
+        self.assertTrue(all(command.value <= CART_ROUTE_MAX_SEGMENT_M for command in translations))
+        self.assertAlmostEqual(
+            sum(command.value for command in translations[1:6]),
+            dy_m,
+        )
+        self.assertAlmostEqual(
+            sum(command.value for command in translations[6:]),
+            dx_m + CART_TURN_CLEARANCE_RETREAT_M,
         )
 
-        result = Stage1CartMapNavigator(inner).navigate()
+    def test_cart_map_navigator_executes_manhattan_commands_and_restores_yaw(self):
+        runtime = _Runtime([], absolute_yaw=0.31)
+        expected_commands = build_cart_manhattan_commands(
+            runtime, *cart_transition_body_delta()
+        )
 
-        self.assertIs(result, expected)
-        self.assertEqual(calls[0]["reference"], (0.0, 0.0, 0.0))
-        self.assertEqual(calls[0]["observed"], (*cart_transition_body_delta(), 0.0))
+        result = Stage1CartMapNavigator(runtime).navigate()
+
+        self.assertEqual(result.mode, "map-manhattan")
+        self.assertEqual(result.command_count, len(expected_commands))
+        self.assertEqual(
+            [(row.kind, row.value) for row, _precision in runtime.adapter.executed],
+            [(row.kind, row.value) for row in expected_commands],
+        )
+        self.assertTrue(all(precision for _row, precision in runtime.adapter.executed))
+        self.assertEqual(runtime.adapter.yaw_corrections[0]["target_yaw_rad"], 0.31)
+        self.assertTrue(runtime.adapter.stopped)
 
 
 if __name__ == "__main__":

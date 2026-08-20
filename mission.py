@@ -191,6 +191,7 @@ def run_book_pick_once(
     replay_reference,
     say=print,
     coarse=False,
+    press_m=0.0,
 ):
     """Align one book, apply the fixed Z handoff, and replay one Pick."""
 
@@ -209,8 +210,12 @@ def run_book_pick_once(
             f"dx={dx:.3f} m (允许 ±{BOOK_ALIGNMENT_X_TOLERANCE_M:.3f}), "
             f"dy={dy:.3f} m (允许 ±{BOOK_ALIGNMENT_Y_TOLERANCE_M:.3f})"
         )
-    say("开始按 DataReplay 原始高度执行 Stage-1 Pick（视觉 Z 仅记录）")
-    replay = replayer.pick(0.0)
+    press_m = float(press_m)
+    say(
+        "开始执行 Stage-1 Pick："
+        f"DataReplay 原始高度，额外下压={press_m * 1000.0:.1f} mm"
+    )
+    replay = replayer.pick(-press_m)
     say(
         f"Pick 回放完成: frames={replay.frames_sent}, "
         f"torso target={replay.torso_target_m:.3f} m, "
@@ -246,6 +251,7 @@ def run_book_pick_place_once(
     place_replayer,
     say=print,
     coarse=False,
+    press_m=0.0,
 ):
     """Run one complete table Pick followed immediately by one cart Place."""
 
@@ -256,6 +262,7 @@ def run_book_pick_place_once(
         replay_reference,
         say=say,
         coarse=coarse,
+        press_m=press_m,
     )
     place = run_book_place_once(cart_navigator, place_replayer, say=say)
     return BookPickPlaceRun(pick=pick, place=place)

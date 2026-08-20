@@ -35,11 +35,16 @@ class MainArgumentTests(unittest.TestCase):
         self.assertEqual(args.book_align_mode, "vector")
 
     def test_accepts_combined_pick_place(self):
-        with patch.object(sys, "argv", ["main.py", "--book-pick-place"]):
+        with patch.object(
+            sys,
+            "argv",
+            ["main.py", "--book-pick-place", "--book-pick-press-mm", "10"],
+        ):
             args = arguments()
 
         self.assertTrue(args.book_pick_place)
         self.assertFalse(args.book_coarse)
+        self.assertEqual(args.book_pick_press_mm, 10.0)
 
     def test_book_pick_defaults_to_no_coarse_positioning(self):
         with patch.object(sys, "argv", ["main.py", "--book-pick"]):

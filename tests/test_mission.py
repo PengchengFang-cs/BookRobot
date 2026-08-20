@@ -333,6 +333,24 @@ class BookAlignmentMissionTests(unittest.TestCase):
         self.assertEqual(len(navigator.calls), 1)
         self.assertEqual(replayer.offsets, [0.0])
 
+    def test_thin_book_press_lowers_pick_replay_by_ten_millimetres(self):
+        target = _book((0.785, -0.380, 0.723))
+        final_target = _book((0.716, -0.390, 0.723))
+        vision = _Vision([[target], [final_target]])
+        navigator = _AlignmentNavigator([_nav_result(0.070, 0.010)])
+        replayer = _PickReplayer()
+
+        run_book_pick_once(
+            vision,
+            navigator,
+            replayer,
+            _reference(),
+            say=lambda _message: None,
+            press_m=0.010,
+        )
+
+        self.assertEqual(replayer.offsets, [-0.010])
+
 
 class BookPlaceMissionTests(unittest.TestCase):
     def test_place_navigates_to_cart_then_replays(self):
