@@ -64,6 +64,7 @@ def calibrate_replay_place_reference(
     source_size,
     detect_cart,
     detect_book=None,
+    recorded_book_offset_from_left_m=None,
     reference_frame_index=0,
     placed_frame_index=-1,
 ):
@@ -82,8 +83,11 @@ def calibrate_replay_place_reference(
             raise ValueError("place_reference_frame_invalid")
         if not 0 <= placed_index < frame_count:
             raise ValueError("place_placed_frame_invalid")
+        wanted_indices = {int(reference_frame_index)}
+        if recorded_book_offset_from_left_m is None:
+            wanted_indices.add(placed_index)
         frames = {}
-        for index in (int(reference_frame_index), placed_index):
+        for index in wanted_indices:
             frames[index] = (
                 np.asarray(images[index]),
                 np.asarray(depths[index], dtype=float) / 1000.0,
@@ -123,33 +127,38 @@ def calibrate_replay_place_reference(
             raise ValueError(f"recorded_cart_platform_not_found_frame_{index}")
         platforms[index] = max(candidates, key=lambda item: item.confidence)
 
-    final_rgb, final_depth, final_torso, final_head = frames[placed_index]
-    final_transform = lambda point: camera_point_to_base(
-        point, final_torso, final_head[0], final_head[1]
-    )
-    books = [
-        observation
-        for observation in observations_by_frame[placed_index]
-        if observation.semantic_class == "book"
-    ]
-    if not books and detect_book is not None:
-        books = list(detect_book(np.ascontiguousarray(final_rgb[:, :, ::-1])))
-    if not books:
-        raise ValueError("recorded_placed_book_not_found")
-    final_platform = platforms[placed_index]
-    book_centers = [
-        _mask_center_base(book, final_depth, intrinsics, final_transform)
-        for book in books
-    ]
-    # The recording contains one placed book. If the service returns another
-    # book outside the cart, choose the center nearest the loading plane.
-    book_center = min(
-        book_centers,
-        key=lambda point: abs(float(point[2]) - float(final_platform.center[2])),
-    )
-    left = np.asarray(final_platform.left_edge, dtype=float)
-    lateral = np.asarray(final_platform.lateral_axis_right_to_left, dtype=float)
-    offset_from_left = float(np.dot(left - book_center, lateral))
+    if recorded_book_offset_from_left_m is not None:
+        offset_from_left = float(recorded_book_offset_from_left_m)
+        if not np.isfinite(offset_from_left) or offset_from_left <= 0.0:
+            raise ValueError("recorded_book_offset_invalid")
+    else:
+        final_rgb, final_depth, final_torso, final_head = frames[placed_index]
+        final_transform = lambda point: camera_point_to_base(
+            point, final_torso, final_head[0], final_head[1]
+        )
+        books = [
+            observation
+            for observation in observations_by_frame[placed_index]
+            if observation.semantic_class == "book"
+        ]
+        if not books and detect_book is not None:
+            books = list(detect_book(np.ascontiguousarray(final_rgb[:, :, ::-1])))
+        if not books:
+            raise ValueError("recorded_placed_book_not_found")
+        final_platform = platforms[placed_index]
+        book_centers = [
+            _mask_center_base(book, final_depth, intrinsics, final_transform)
+            for book in books
+        ]
+        # The recording contains one placed book. If the service returns another
+        # book outside the cart, choose the center nearest the loading plane.
+        book_center = min(
+            book_centers,
+            key=lambda point: abs(float(point[2]) - float(final_platform.center[2])),
+        )
+        left = np.asarray(final_platform.left_edge, dtype=float)
+        lateral = np.asarray(final_platform.lateral_axis_right_to_left, dtype=float)
+        offset_from_left = float(np.dot(left - book_center, lateral))
 
     reference_platform = platforms[int(reference_frame_index)]
     _reference_rgb, _depth, reference_torso, reference_head = frames[

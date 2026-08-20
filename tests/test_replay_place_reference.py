@@ -156,6 +156,44 @@ class ReplayPlaceReferenceTests(unittest.TestCase):
 
         self.assertAlmostEqual(result.recorded_book_offset_from_left_m, 0.17)
 
+    def test_explicit_recorded_offset_only_detects_reference_frame(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "place.h5"
+            with h5py.File(path, "w") as recording:
+                recording.create_dataset(
+                    "observation/image",
+                    data=np.zeros((2, 12, 16, 3), dtype=np.uint8),
+                )
+                recording.create_dataset(
+                    "observations/depth_head_rgbd",
+                    data=np.full((2, 12, 16), 1000, dtype=np.uint16),
+                )
+                recording.create_dataset(
+                    "observations/qpos_torso", data=np.full((2, 1), 0.2)
+                )
+                recording.create_dataset(
+                    "observations/qpos_head", data=np.zeros((2, 2))
+                )
+            calls = []
+            cart = SimpleNamespace(semantic_class="cart_body")
+            with patch(
+                "replay_place_reference.reconstruct_cart_top_platform",
+                return_value=_platform(
+                    left=(1.0, 0.4, 0.9), center=(1.0, 0.025, 0.9)
+                ),
+            ):
+                result = calibrate_replay_place_reference(
+                    h5_path=path,
+                    asset_id="S1_CART_PLACE_BOOK",
+                    source_intrinsics=CameraIntrinsics(10.0, 10.0, 8.0, 6.0),
+                    source_size=(16, 12),
+                    detect_cart=lambda image: calls.append(image) or (cart,),
+                    recorded_book_offset_from_left_m=0.17,
+                )
+
+        self.assertEqual(len(calls), 1)
+        self.assertAlmostEqual(result.recorded_book_offset_from_left_m, 0.17)
+
 
 if __name__ == "__main__":
     unittest.main()

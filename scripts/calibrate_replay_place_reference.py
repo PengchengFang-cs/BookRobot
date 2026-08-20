@@ -34,6 +34,12 @@ def arguments(argv=None):
     parser.add_argument("--asset-id", default="S1_CART_PLACE_BOOK")
     parser.add_argument("--reference-frame", type=int, default=0)
     parser.add_argument("--placed-frame", type=int, default=-1)
+    parser.add_argument(
+        "--recorded-book-offset-from-left-m",
+        type=float,
+        default=0.17,
+        help="2.4录制的第一槽中心距托板左边缘，现场测量为0.17m",
+    )
     parser.add_argument("--output", required=True)
     return parser.parse_args(argv)
 
@@ -81,6 +87,9 @@ def main(argv=None):
             source_size=SOURCE_SIZE,
             detect_cart=detect_cart,
             detect_book=detect_book,
+            recorded_book_offset_from_left_m=(
+                args.recorded_book_offset_from_left_m
+            ),
             reference_frame_index=args.reference_frame,
             placed_frame_index=args.placed_frame,
         )
