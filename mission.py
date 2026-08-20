@@ -20,15 +20,15 @@ from config import SCAN_ANGLE_RAD, SCAN_COUNT
 
 BOOK_ALIGNMENT_X_TOLERANCE_M = 0.020
 BOOK_ALIGNMENT_Y_TOLERANCE_M = 0.010
-BOOK_VISION_SUCCESSFUL_SAMPLES = 3
-BOOK_VISION_MAXIMUM_ATTEMPTS = 5
+BOOK_VISION_SUCCESSFUL_SAMPLES = 1
+BOOK_VISION_MAXIMUM_ATTEMPTS = 3
 BOOK_ALIGNMENT_MAXIMUM_CORRECTIONS = 3
 CART_PLACE_X_TOLERANCE_M = 0.020
 CART_PLACE_Y_TOLERANCE_M = 0.010
 CART_PLACE_YAW_TOLERANCE_RAD = 0.5 * 3.141592653589793 / 180.0
-CART_PLACE_MAXIMUM_CORRECTIONS = 4
-CART_VISION_SUCCESSFUL_SAMPLES = 3
-CART_VISION_MAXIMUM_ATTEMPTS = 5
+CART_PLACE_MAXIMUM_CORRECTIONS = 3
+CART_VISION_SUCCESSFUL_SAMPLES = 1
+CART_VISION_MAXIMUM_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -99,7 +99,7 @@ def _xy_within_tolerance(target):
 
 
 def _stable_book_measurement(vision, selector, *, frame="base_link", say=print):
-    """Select the same logical book in several frames and median its point."""
+    """Use the first successful frame; missed frames may be retried."""
 
     find_samples = getattr(vision, "find_samples", None)
     if callable(find_samples):
@@ -111,7 +111,7 @@ def _stable_book_measurement(vision, selector, *, frame="base_link", say=print):
         )
         if len(frames) < BOOK_VISION_SUCCESSFUL_SAMPLES:
             raise RuntimeError(
-                "多帧视觉没有获得足够的书本结果: "
+                "本轮没有获得可用的书本图像: "
                 f"{len(frames)}/{BOOK_VISION_SUCCESSFUL_SAMPLES}"
             )
     else:
@@ -347,7 +347,7 @@ def _stable_cart_place_target(vision, replay_reference, slot_index):
         )
         if len(carts) < CART_VISION_SUCCESSFUL_SAMPLES:
             raise RuntimeError(
-                "多帧视觉没有获得足够的小推车托板结果: "
+                "本轮没有获得可用的小推车托板图像: "
                 f"{len(carts)}/{CART_VISION_SUCCESSFUL_SAMPLES}"
             )
     else:

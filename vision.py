@@ -542,8 +542,8 @@ class Vision:
                 print(f"[视觉] 小推车检测帧不能用: {type(error).__name__}: {error}")
         return None
 
-    def find_cart_samples(self, *, successful_samples=3, maximum_attempts=5):
-        """Collect several independent cart/platform measurements."""
+    def find_cart_samples(self, *, successful_samples=1, maximum_attempts=3):
+        """Return immediately on the first successful cart measurement."""
 
         def report(attempt, success_count, found):
             if found:
@@ -634,8 +634,8 @@ class Vision:
         target="book",
         frame="map",
         *,
-        successful_samples=3,
-        maximum_attempts=5,
+        successful_samples=1,
+        maximum_attempts=3,
     ):
         """Collect distinct successful detections, retrying missed frames."""
 

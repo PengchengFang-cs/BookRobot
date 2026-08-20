@@ -104,8 +104,10 @@ class _PickReplayer:
 class _CartVision:
     def __init__(self, groups):
         self.groups = iter(groups)
+        self.calls = []
 
-    def find_cart_samples(self, **_kwargs):
+    def find_cart_samples(self, **kwargs):
+        self.calls.append(kwargs)
         return next(self.groups)
 
 
@@ -459,6 +461,9 @@ class BookAlignmentMissionTests(unittest.TestCase):
         self.assertTrue(result.xy_within_tolerance)
         self.assertEqual(len(navigator.calls), 2)
         self.assertEqual(len(vision.calls), 3)
+        self.assertTrue(
+            all(call[2:] == (1, 3) for call in vision.calls)
+        )
         self.assertAlmostEqual(result.final.residual_m[0], 0.001)
         self.assertAlmostEqual(result.final.residual_m[1], 0.002)
 
@@ -481,6 +486,13 @@ class CartPlaceMissionTests(unittest.TestCase):
         )
 
         self.assertEqual(len(navigator.targets), 1)
+        self.assertEqual(
+            vision.calls,
+            [
+                {"successful_samples": 1, "maximum_attempts": 3},
+                {"successful_samples": 1, "maximum_attempts": 3},
+            ],
+        )
         self.assertEqual(replayer.calls, 1)
         self.assertTrue(result.alignment.within_tolerance)
         self.assertEqual(result.replay.frames_sent, 388)
@@ -501,7 +513,7 @@ class CartPlaceMissionTests(unittest.TestCase):
                 say=lambda _message: None,
             )
 
-        self.assertEqual(len(navigator.targets), 4)
+        self.assertEqual(len(navigator.targets), 3)
         self.assertEqual(replayer.calls, 0)
 
 
