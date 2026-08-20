@@ -6,15 +6,11 @@ from unittest.mock import patch
 
 from book_navigation import (
     BookAlignmentNavigator,
-    CART_COARSE_FRONT_CLEARANCE_M,
     CART_ROUTE_MAX_SEGMENT_M,
     CART_SCAN_STEP_RAD,
     CART_SCAN_STEPS,
     CART_TURN_CLEARANCE_RETREAT_M,
-    Stage1CartMapNavigator,
-    build_cart_final_forward_commands,
-    build_cart_manhattan_commands,
-    cart_transition_body_delta,
+    Stage1CartNavigator,
     load_navnav_runtime,
 )
 
@@ -111,7 +107,7 @@ class _Runtime:
 
 class BookNavigationTests(unittest.TestCase):
     @staticmethod
-    def _batch_vision(carts, events=None, fine_cart=None):
+    def _batch_vision(carts, events=None):
         events = [] if events is None else events
 
         def capture_cart_frame(*, scan_angle_deg):
@@ -123,14 +119,9 @@ class BookNavigationTests(unittest.TestCase):
             events.append(("detect_queue", len(frames)))
             return tuple(carts)
 
-        def find_cart(*, require_body_target=False):
-            events.append(("find_cart", require_body_target))
-            return fine_cart
-
         return SimpleNamespace(
             capture_cart_frame=capture_cart_frame,
             detect_cart_frames_queued=detect_cart_frames_queued,
-            find_cart=find_cart,
         )
 
     @staticmethod
@@ -351,77 +342,6 @@ class BookNavigationTests(unittest.TestCase):
         self.assertEqual(call.torso, 0.28)
         self.assertEqual(result.command_count, 0)
 
-    def test_cart_transition_uses_reviewed_map_delta_in_table_body_axes(self):
-        dx_m, dy_m = cart_transition_body_delta()
-
-        self.assertAlmostEqual(dx_m, 0.52493, places=4)
-        self.assertAlmostEqual(dy_m, 0.89052, places=4)
-        self.assertAlmostEqual(math.hypot(dx_m, dy_m), 1.03372, places=4)
-
-    def test_cart_route_backs_up_then_uses_two_right_angle_legs(self):
-        runtime = _Runtime([])
-        dx_m, dy_m = cart_transition_body_delta()
-
-        commands = build_cart_manhattan_commands(runtime, dx_m, dy_m)
-
-        self.assertEqual(commands[0].kind, runtime.WandaCommandKind.DRIVE_BACKWARD)
-        self.assertAlmostEqual(commands[0].value, CART_TURN_CLEARANCE_RETREAT_M)
-        spins = [command for command in commands if command.kind == "spin"]
-        self.assertEqual([command.value for command in spins], [math.pi / 2, -math.pi / 2])
-        translations = [command for command in commands if command.kind != "spin"]
-        self.assertTrue(all(command.value <= CART_ROUTE_MAX_SEGMENT_M for command in translations))
-        self.assertAlmostEqual(
-            sum(command.value for command in translations[1:6]),
-            dy_m,
-        )
-        self.assertAlmostEqual(
-            sum(command.value for command in translations[6:]),
-            dx_m + CART_TURN_CLEARANCE_RETREAT_M,
-        )
-
-    def test_cart_map_navigator_executes_manhattan_commands_and_restores_yaw(self):
-        runtime = _Runtime([], absolute_yaw=0.31)
-        expected_commands = build_cart_manhattan_commands(
-            runtime, *cart_transition_body_delta()
-        )
-
-        result = Stage1CartMapNavigator(runtime).navigate()
-
-        self.assertEqual(result.mode, "map-manhattan")
-        self.assertEqual(result.command_count, len(expected_commands))
-        self.assertEqual(
-            [(row.kind, row.value) for row, _precision in runtime.adapter.executed],
-            [(row.kind, row.value) for row in expected_commands],
-        )
-        self.assertTrue(all(precision for _row, precision in runtime.adapter.executed))
-        self.assertEqual(runtime.adapter.yaw_corrections[0]["target_yaw_rad"], 0.31)
-        self.assertTrue(runtime.adapter.stopped)
-
-    def test_cart_resume_executes_only_requested_final_forward_segments(self):
-        runtime = _Runtime([], absolute_yaw=0.31)
-        dx_m, _dy_m = cart_transition_body_delta()
-        expected = build_cart_final_forward_commands(runtime, dx_m, 2)
-
-        result = Stage1CartMapNavigator(
-            runtime,
-            resume_final_forward_segments=2,
-        ).navigate()
-
-        self.assertEqual(result.mode, "map-manhattan-resume")
-        self.assertEqual(result.command_count, 2)
-        self.assertEqual(
-            [(row.kind, row.value) for row, _precision in runtime.adapter.executed],
-            [(row.kind, row.value) for row in expected],
-        )
-        self.assertAlmostEqual(sum(row.value for row in expected), 0.36246, places=4)
-
-    def test_cart_resume_rejects_an_impossible_segment_count(self):
-        runtime = _Runtime([])
-        dx_m, _dy_m = cart_transition_body_delta()
-
-        with self.assertRaisesRegex(ValueError, "between 1 and 4"):
-            build_cart_final_forward_commands(runtime, dx_m, 5)
-
     def test_cart_scan_only_stays_in_place_and_samples_every_fifteen_degrees(self):
         scan_poses = tuple(
             (-0.2, 0.0, CART_SCAN_STEP_RAD * index)
@@ -440,7 +360,7 @@ class BookNavigationTests(unittest.TestCase):
         ]
         events = []
         vision = self._batch_vision(carts, events)
-        result = Stage1CartMapNavigator(
+        result = Stage1CartNavigator(
             runtime,
             vision=vision,
             book_index=2,
@@ -471,7 +391,7 @@ class BookNavigationTests(unittest.TestCase):
         self.assertEqual(runtime.adapter.yaw_corrections, [])
         self.assertTrue(runtime.adapter.stopped)
 
-    def test_cart_visual_navigation_uses_body_target_then_fine_aligns_at_point_eight(self):
+    def test_cart_visual_navigation_stops_after_reviewed_coarse_route(self):
         scan_poses = tuple(
             (-0.2, 0.0, CART_SCAN_STEP_RAD * index)
             for index in range(1, CART_SCAN_STEPS + 1)
@@ -493,19 +413,16 @@ class BookNavigationTests(unittest.TestCase):
             )
             for index, pose in enumerate(scan_poses, 1)
         ]
-        fine_cart = SimpleNamespace(
-            body_target=SimpleNamespace(center=(0.90, 0.0, 0.70))
-        )
-        vision = self._batch_vision(carts, fine_cart=fine_cart)
+        vision = self._batch_vision(carts)
 
-        result = Stage1CartMapNavigator(
+        result = Stage1CartNavigator(
             runtime,
             vision=vision,
             book_index=1,
         ).navigate()
 
         commands = [row for row, _precision in runtime.adapter.executed]
-        self.assertEqual(result.mode, "cart-visual-manhattan-fine")
+        self.assertEqual(result.mode, "cart-visual-manhattan-coarse")
         for actual, expected in zip(
             result.cart_target_origin_m,
             (1.8, 0.5, 0.7),
@@ -526,16 +443,11 @@ class BookNavigationTests(unittest.TestCase):
         self.assertAlmostEqual(commands[10].value, -math.pi / 2.0)
         self.assertEqual(commands[11].kind, "forward")
         self.assertAlmostEqual(commands[11].value, 0.2)
-        self.assertEqual(commands[12].kind, "forward")
-        self.assertAlmostEqual(commands[12].value, 0.09)
         self.assertAlmostEqual(
             runtime.adapter.yaw_corrections[0]["target_yaw_rad"],
             0.12,
         )
-        self.assertAlmostEqual(
-            runtime.adapter.yaw_corrections[1]["target_yaw_rad"],
-            runtime.absolute_yaw,
-        )
+        self.assertEqual(len(runtime.adapter.yaw_corrections), 1)
         self.assertTrue(runtime.adapter.stopped)
 
     def test_cart_scan_stops_after_ninety_degrees_when_nothing_is_detected(self):
@@ -547,7 +459,7 @@ class BookNavigationTests(unittest.TestCase):
         vision = self._batch_vision([None] * CART_SCAN_STEPS)
 
         with self.assertRaisesRegex(RuntimeError, "没有获得可用的小推车整体深度点"):
-            Stage1CartMapNavigator(runtime, vision=vision, scan_only=True).navigate()
+            Stage1CartNavigator(runtime, vision=vision, scan_only=True).navigate()
 
         commands = [row for row, _precision in runtime.adapter.executed]
         self.assertEqual(len(commands), CART_SCAN_STEPS)

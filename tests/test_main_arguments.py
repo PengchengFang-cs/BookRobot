@@ -34,40 +34,11 @@ class MainArgumentTests(unittest.TestCase):
         self.assertTrue(args.book_pick)
         self.assertEqual(args.book_align_mode, "vector")
 
-    def test_accepts_combined_pick_place(self):
-        with patch.object(
-            sys,
-            "argv",
-            ["main.py", "--book-pick-place", "--book-pick-press-mm", "10"],
-        ):
-            args = arguments()
-
-        self.assertTrue(args.book_pick_place)
-        self.assertFalse(args.book_coarse)
-        self.assertEqual(args.book_pick_press_mm, 10.0)
-
     def test_book_pick_defaults_to_no_coarse_positioning(self):
         with patch.object(sys, "argv", ["main.py", "--book-pick"]):
             args = arguments()
 
         self.assertFalse(args.book_coarse)
-
-    def test_accepts_cart_place_final_segment_resume(self):
-        with patch.object(
-            sys,
-            "argv",
-            ["main.py", "--book-place-resume-final-segments", "2"],
-        ):
-            args = arguments()
-
-        self.assertEqual(args.book_place_resume_final_segments, 2)
-
-        from pathlib import Path
-
-        run_script = (Path(__file__).resolve().parents[1] / "run.sh").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn(" --book-place-resume-final-segments ", run_script)
 
     def test_accepts_motionless_cart_perception(self):
         with patch.object(sys, "argv", ["main.py", "--cart-perception"]):
@@ -101,7 +72,6 @@ class MainArgumentTests(unittest.TestCase):
             args = arguments()
 
         self.assertTrue(args.cart_approach_navigation)
-        self.assertFalse(args.book_place)
         from pathlib import Path
 
         run_script = (Path(__file__).resolve().parents[1] / "run.sh").read_text(

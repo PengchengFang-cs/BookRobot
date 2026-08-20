@@ -27,8 +27,8 @@ class BookAlignLauncherTests(unittest.TestCase):
         branch_end = run_text.index("\nfi", branch)
         text = run_text[branch:branch_end]
         self.assertIn('" --book-pick "', text)
-        self.assertIn('" --book-place "', text)
-        self.assertIn('" --book-pick-place "', text)
+        self.assertNotIn('" --book-place "', text)
+        self.assertNotIn('" --book-pick-place "', text)
         self.assertIn('source "$DIR/scripts/book_vision_env.sh"', text)
         self.assertNotIn("release_base.sh", text)
         self.assertLess(branch, run_text.index("install_moveit_user.sh"))

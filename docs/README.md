@@ -7,13 +7,15 @@
 1. 先读工作区根目录的 `AGENTS.md`，确认允许写入的位置、远端操作边界和真机安全要求。
 2. 再读 [`PROJECT_MAINLINE.md`](PROJECT_MAINLINE.md)，了解项目目标、5090 与 Wanda 的职责以及部署方式。
 3. 然后读 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)，了解当前进度、未解决问题和下一步。
-4. 根据任务查阅路线图、故障档案、工作日志或具体设计与实施计划。
+4. 涉及真机任务顺序时读 [`STAGE1_PIPELINE.md`](STAGE1_PIPELINE.md)，它是当前唯一 Pipeline。
+5. 根据任务查阅路线图、故障档案、工作日志或具体设计与实施计划。
 
 不得用其他文档中的旧描述覆盖 `AGENTS.md` 的规则。若内容冲突，先停止相关写入、部署或真机操作，并按 `AGENTS.md` 处理。
 
 ## 当前工作入口
 
 - [`CURRENT_STATUS.md`](CURRENT_STATUS.md)：当前阶段、有效能力、正在进行的工作和下一步。
+- [`STAGE1_PIPELINE.md`](STAGE1_PIPELINE.md)：当前唯一 Stage 1 任务顺序和实现边界。
 - [`ROADMAP.md`](ROADMAP.md)：阶段顺序、状态和完成依据。
 - [`ROBOT_ISSUES.md`](ROBOT_ISSUES.md)：带稳定编号的永久机器人故障档案。
 - [`WORKLOG.md`](WORKLOG.md)：按日期记录的重要操作、结果和判断。

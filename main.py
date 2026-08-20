@@ -9,9 +9,7 @@ from geometry import fruit_from_text
 from mission import (
     run_book_alignment_from_current_once,
     run_book_alignment_once,
-    run_book_pick_place_once,
     run_book_pick_once,
-    run_book_place_once,
     run_one_fruit,
 )
 
@@ -59,22 +57,6 @@ def arguments():
         help="检测、对位并执行一次 Stage-1 DataReplay 吸书",
     )
     operation.add_argument(
-        "--book-place",
-        action="store_true",
-        help="从还书桌前地图位置导航到小推车并执行一次 Place 2.4",
-    )
-    operation.add_argument(
-        "--book-place-resume-final-segments",
-        type=int,
-        metavar="N",
-        help="从中断点只续跑小推车路线最后N个前进分段，再执行Place",
-    )
-    operation.add_argument(
-        "--book-pick-place",
-        action="store_true",
-        help="串联执行一次书本 Pick、地图导航和小推车 Place",
-    )
-    operation.add_argument(
         "--cart-perception",
         action="store_true",
         help="只检测小推车顶面并输出五个槽位，不产生运动",
@@ -87,7 +69,7 @@ def arguments():
     operation.add_argument(
         "--cart-approach-navigation",
         action="store_true",
-        help="不拿书、不放书：扫描推车、粗定位到0.8米并做一次视觉微调",
+        help="不拿书、不放书：扫描推车并执行当前直角粗导航",
     )
     parser.add_argument(
         "--book-align-mode",
@@ -137,14 +119,11 @@ def run_real(args):
         if (
             args.book_align
             or args.book_pick
-            or args.book_place
-            or args.book_place_resume_final_segments is not None
-            or args.book_pick_place
             or args.cart_perception
             or args.cart_scan_navigation
             or args.cart_approach_navigation
         ):
-            from book_navigation import BookAlignmentNavigator, Stage1CartMapNavigator
+            from book_navigation import BookAlignmentNavigator, Stage1CartNavigator
             from config import REPLAY_PICK_REFERENCE_PATH
             from replay_pick_reference import load_replay_pick_reference
             from tf2_ros import Buffer, TransformListener
@@ -193,7 +172,7 @@ def run_real(args):
                 return
 
             if args.cart_scan_navigation or args.cart_approach_navigation:
-                navigation = Stage1CartMapNavigator(
+                navigation = Stage1CartNavigator(
                     vision=vision,
                     book_index=args.book_index,
                     scan_only=args.cart_scan_navigation,
@@ -223,25 +202,7 @@ def run_real(args):
                     timeout_s=0.5,
                 ),
             )
-            if args.book_place or args.book_place_resume_final_segments is not None:
-                from book_place_replay import Stage1BookPlaceReplayer
-
-                run_book_place_once(
-                    Stage1CartMapNavigator(
-                        resume_final_forward_segments=(
-                            args.book_place_resume_final_segments
-                        ),
-                        vision=(
-                            None
-                            if args.book_place_resume_final_segments is not None
-                            else vision
-                        ),
-                        book_index=args.book_index,
-                    ),
-                    Stage1BookPlaceReplayer(**feedback),
-                    say,
-                )
-            elif args.book_pick or args.book_pick_place:
+            if args.book_pick:
                 from book_pick_replay import Stage1BookPickReplayer
 
                 navigator = BookAlignmentNavigator(mode=args.book_align_mode)
@@ -249,33 +210,15 @@ def run_real(args):
                     REPLAY_PICK_REFERENCE_PATH
                 )
                 pick_replayer = Stage1BookPickReplayer(**feedback)
-                if args.book_pick_place:
-                    from book_place_replay import Stage1BookPlaceReplayer
-
-                    run_book_pick_place_once(
-                        vision,
-                        navigator,
-                        pick_replayer,
-                        replay_reference,
-                        Stage1CartMapNavigator(
-                            vision=vision,
-                            book_index=args.book_index,
-                        ),
-                        Stage1BookPlaceReplayer(**feedback),
-                        say,
-                        coarse=args.book_coarse,
-                        press_m=args.book_pick_press_mm / 1000.0,
-                    )
-                else:
-                    run_book_pick_once(
-                        vision,
-                        navigator,
-                        pick_replayer,
-                        replay_reference,
-                        say,
-                        coarse=args.book_coarse,
-                        press_m=args.book_pick_press_mm / 1000.0,
-                    )
+                run_book_pick_once(
+                    vision,
+                    navigator,
+                    pick_replayer,
+                    replay_reference,
+                    say,
+                    coarse=args.book_coarse,
+                    press_m=args.book_pick_press_mm / 1000.0,
+                )
             else:
                 navigator = BookAlignmentNavigator(mode=args.book_align_mode)
                 replay_reference = load_replay_pick_reference(
@@ -292,8 +235,7 @@ def run_real(args):
                     replay_reference,
                     say,
                 )
-            if not args.book_place:
-                print(f"[视觉] 调试图: {vision.debug_path}")
+            print(f"[视觉] 调试图: {vision.debug_path}")
             return
 
         from navigation import Navigation

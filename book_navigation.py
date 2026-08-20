@@ -12,13 +12,10 @@ NAVNAV_ROOT = Path("/home/unix_ai/navnav_final")
 NAVNAV_MODULE = "runtime.wanda_nav_whrc"
 VECTOR_FINAL_YAW_TOLERANCE_RAD = math.radians(0.15)
 VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M = 0.010
-RETURN_TABLE_MAP_POSE = (2.857213, -2.520253, math.radians(-1.920977))
-CART_FRONT_MAP_POSE = (3.411691, -1.647823, math.radians(-1.558860))
 CART_TURN_CLEARANCE_RETREAT_M = 0.20
 CART_ROUTE_MAX_SEGMENT_M = 0.20
 CART_SCAN_STEP_RAD = math.radians(15.0)
 CART_SCAN_STEPS = 6
-CART_COARSE_FRONT_CLEARANCE_M = 0.80
 
 
 @dataclass(frozen=True)
@@ -160,35 +157,18 @@ class BookAlignmentNavigator:
             adapter.stop()
 
 
-def cart_transition_body_delta(
-    table_pose=RETURN_TABLE_MAP_POSE,
-    cart_pose=CART_FRONT_MAP_POSE,
-):
-    """Express the reviewed table-to-cart map displacement in table body axes."""
-
-    world_dx = float(cart_pose[0]) - float(table_pose[0])
-    world_dy = float(cart_pose[1]) - float(table_pose[1])
-    yaw = float(table_pose[2])
-    return (
-        math.cos(yaw) * world_dx + math.sin(yaw) * world_dy,
-        -math.sin(yaw) * world_dx + math.cos(yaw) * world_dy,
-    )
-
-
-class Stage1CartMapNavigator:
-    """Follow an axis-aligned table-to-cart route with turn clearance."""
+class Stage1CartNavigator:
+    """Run the reviewed Pick-endpoint to cart coarse transition."""
 
     def __init__(
         self,
         runtime=None,
         *,
-        resume_final_forward_segments=None,
         vision=None,
         book_index=1,
         scan_only=False,
     ):
         self.runtime = runtime
-        self.resume_final_forward_segments = resume_final_forward_segments
         self.vision = vision
         self.book_index = int(book_index)
         self.scan_only = bool(scan_only)
@@ -196,42 +176,12 @@ class Stage1CartMapNavigator:
             raise ValueError("book_index must be between 1 and 5")
 
     def navigate(self):
+        if self.vision is None:
+            raise RuntimeError("cart navigation requires live cart vision")
         if self.runtime is None:
             self.runtime = load_navnav_runtime()
         adapter = self.runtime.WandaRos2Adapter()
-        if self.vision is not None and self.resume_final_forward_segments is None:
-            return self._navigate_with_cart_scan(adapter)
-        dx_m, dy_m = cart_transition_body_delta()
-        if self.resume_final_forward_segments is None:
-            commands = build_cart_manhattan_commands(self.runtime, dx_m, dy_m)
-            mode = "map-manhattan"
-        else:
-            commands = build_cart_final_forward_commands(
-                self.runtime,
-                dx_m,
-                self.resume_final_forward_segments,
-            )
-            mode = "map-manhattan-resume"
-        try:
-            adapter.preflight()
-            starting_yaw = adapter.current_absolute_imu_yaw()
-            adapter.capture_task_origin()
-            for command in commands:
-                adapter.execute_command(command, precision_mode=True)
-            adapter.correct_absolute_imu_yaw(
-                target_yaw_rad=starting_yaw,
-                tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
-            )
-            pose = adapter.current_task_pose()
-            return BookAlignmentExecution(
-                command_count=len(commands),
-                mode=mode,
-                odom_dx_m=float(pose.x),
-                odom_dy_m=float(pose.y),
-                imu_dyaw_rad=float(pose.yaw),
-            )
-        finally:
-            adapter.stop()
+        return self._navigate_with_cart_scan(adapter)
 
     def _navigate_with_cart_scan(self, adapter):
         commands_sent = 0
@@ -361,15 +311,14 @@ class Stage1CartMapNavigator:
             commands_sent += 1
 
             # The route started by backing exactly 20 cm away from the Pick
-            # replay endpoint.  After completing the Y leg and restoring yaw,
-            # move forward by the same 20 cm instead of estimating coarse X
-            # from cart depth.  The fresh front-facing observation below owns
-            # the remaining X/Y correction and the 0.8 m target distance.
+            # replay endpoint. After completing the Y leg and restoring yaw,
+            # move forward by the same 20 cm. This finishes coarse navigation;
+            # precise docking belongs to shelf/DataReplay geometry, not the
+            # cart-body center used above to estimate the long Y leg.
             forward_delta = CART_TURN_CLEARANCE_RETREAT_M
             print(
                 "[导航] 推车粗定位（书本坐标系）: "
-                f"restore_x={forward_delta:.3f} m; "
-                "0.800 m距离交给正面视觉微调"
+                f"restore_x={forward_delta:.3f} m; 粗导航完成"
             )
             for command in _distance_commands(
                 self.runtime,
@@ -384,36 +333,10 @@ class Stage1CartMapNavigator:
                 tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
             )
 
-            # Rotation and long grid legs can accumulate tyre-slip error.  Once
-            # the robot faces the cart, take a new RGB-D observation and reuse
-            # the same vector X/Y correction used before book pickup.
-            fine_cart = self.vision.find_cart(require_body_target=True)
-            if fine_cart is None or fine_cart.body_target is None:
-                raise RuntimeError("正面朝向小推车后没有获得可用的微调深度点")
-            fine_observed = fine_cart.body_target.center
-            fine_reference = (
-                CART_COARSE_FRONT_CLEARANCE_M,
-                0.0,
-                float(fine_observed[2]),
-            )
-            fine_commands = _build_vector_commands(
-                self.runtime,
-                fine_reference,
-                fine_observed,
-            )
-            cart_facing_yaw = adapter.current_absolute_imu_yaw()
-            for command in fine_commands:
-                adapter.execute_command(command, precision_mode=True)
-                commands_sent += 1
-            if fine_commands:
-                adapter.correct_absolute_imu_yaw(
-                    target_yaw_rad=cart_facing_yaw,
-                    tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
-                )
             pose = adapter.current_task_pose()
             return CartVisualNavigationExecution(
                 command_count=commands_sent,
-                mode="cart-visual-manhattan-fine",
+                mode="cart-visual-manhattan-coarse",
                 odom_dx_m=float(pose.x),
                 odom_dy_m=float(pose.y),
                 imu_dyaw_rad=float(pose.yaw),
@@ -496,49 +419,3 @@ def _distance_commands(runtime, kind, distance_m):
         runtime.MappedMotionCommand(kind, segment, "XY")
         for _ in range(count)
     )
-
-
-def build_cart_manhattan_commands(runtime, dx_m, dy_m):
-    """Back away, move laterally on a 90-degree leg, then finish forward."""
-
-    commands = list(_distance_commands(
-        runtime,
-        runtime.WandaCommandKind.DRIVE_BACKWARD,
-        CART_TURN_CLEARANCE_RETREAT_M,
-    ))
-    lateral_turn = math.copysign(math.pi / 2.0, float(dy_m))
-    commands.append(
-        runtime.MappedMotionCommand(runtime.WandaCommandKind.SPIN, lateral_turn, "Y")
-    )
-    commands.extend(_distance_commands(
-        runtime,
-        runtime.WandaCommandKind.DRIVE_FORWARD,
-        abs(float(dy_m)),
-    ))
-    commands.append(
-        runtime.MappedMotionCommand(runtime.WandaCommandKind.SPIN, -lateral_turn, "Y")
-    )
-    forward_m = float(dx_m) + CART_TURN_CLEARANCE_RETREAT_M
-    forward_kind = (
-        runtime.WandaCommandKind.DRIVE_FORWARD
-        if forward_m >= 0.0
-        else runtime.WandaCommandKind.DRIVE_BACKWARD
-    )
-    commands.extend(_distance_commands(runtime, forward_kind, abs(forward_m)))
-    return tuple(commands)
-
-
-def build_cart_final_forward_commands(runtime, dx_m, segment_count):
-    """Return the requested trailing commands from the final forward leg."""
-
-    all_commands = _distance_commands(
-        runtime,
-        runtime.WandaCommandKind.DRIVE_FORWARD,
-        float(dx_m) + CART_TURN_CLEARANCE_RETREAT_M,
-    )
-    segment_count = int(segment_count)
-    if segment_count < 1 or segment_count > len(all_commands):
-        raise ValueError(
-            f"remaining final segments must be between 1 and {len(all_commands)}"
-        )
-    return all_commands[-segment_count:]

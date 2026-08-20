@@ -6,9 +6,7 @@ from book_geometry import BookGeometry
 from mission import (
     run_book_alignment_from_current_once,
     run_book_alignment_once,
-    run_book_pick_place_once,
     run_book_pick_once,
-    run_book_place_once,
     run_one_fruit,
 )
 from replay_pick_reference import ReplayPickReference
@@ -402,56 +400,6 @@ class BookAlignmentMissionTests(unittest.TestCase):
         self.assertEqual(len(vision.calls), 3)
         self.assertAlmostEqual(result.final.residual_m[0], 0.001)
         self.assertAlmostEqual(result.final.residual_m[1], 0.002)
-
-
-class BookPlaceMissionTests(unittest.TestCase):
-    def test_place_navigates_to_cart_then_replays(self):
-        calls = []
-        navigation = SimpleNamespace(
-            command_count=3,
-            mode="vector",
-            odom_dx_m=0.52,
-            odom_dy_m=0.89,
-            imu_dyaw_rad=0.0,
-        )
-        cart = SimpleNamespace(
-            navigate=lambda: calls.append("navigate") or navigation
-        )
-        replay = SimpleNamespace(
-            frames_sent=388,
-            torso_target_m=0.2,
-            torso_actual_m=0.2,
-            d01_released=True,
-        )
-        replayer = SimpleNamespace(
-            place=lambda: calls.append("place") or replay
-        )
-
-        result = run_book_place_once(cart, replayer, say=lambda _text: None)
-
-        self.assertEqual(calls, ["navigate", "place"])
-        self.assertIs(result.navigation, navigation)
-        self.assertIs(result.replay, replay)
-
-    def test_combined_flow_finishes_pick_before_cart_place(self):
-        calls = []
-        pick_result = SimpleNamespace(replay=SimpleNamespace(d01_holding=True))
-        place_result = SimpleNamespace(replay=SimpleNamespace(d01_released=True))
-
-        with patch(
-            "mission.run_book_pick_once",
-            side_effect=lambda *_args, **_kwargs: calls.append("pick") or pick_result,
-        ), patch(
-            "mission.run_book_place_once",
-            side_effect=lambda *_args, **_kwargs: calls.append("place") or place_result,
-        ):
-            result = run_book_pick_place_once(
-                object(), object(), object(), object(), object(), object()
-            )
-
-        self.assertEqual(calls, ["pick", "place"])
-        self.assertIs(result.pick, pick_result)
-        self.assertIs(result.place, place_result)
 
 
 if __name__ == "__main__":

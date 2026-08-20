@@ -7,6 +7,13 @@
 - 不记录凭证、密钥或日志原文件；只保留理解项目演进所需的非敏感事实和结论。
 - 本日志记录重要过程，但不替代 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 的当前状态或 [`ROBOT_ISSUES.md`](ROBOT_ISSUES.md) 的永久故障档案。
 
+## 2026-08-20（Asia/Shanghai）
+
+- 用户重新确认 Stage 1 唯一主线：书桌粗导航→多轮视觉对位→Pick DataReplay→后退 `0.20 m`→左转期间每 `15°` 拍摄一次→到 `90°` 后直行到车旁→右转 `90°`→前进 `0.20 m`→托板/槽位与 Place 第 0 帧几何精定位→Place DataReplay。已写入 [`STAGE1_PIPELINE.md`](STAGE1_PIPELINE.md)。
+- 正面 RGB-D 从整车 mask 内成功区分顶盖、空心侧壁截面和最高可用托板；最终托板宽度为 `75.65 cm`，与现场测量 `75 cm` 一致。槽位中心固定为距左边缘 `17/24/31/38/45 cm`。
+- 清理过期编排：删除地图固定点导航、Place 最后分段续跑、整车中心 `0.8 m` 二次精调，以及从粗导航直接启动 Place 的入口。`cart navigation target` 只保留为左转 `90°` 后长距离直行的粗估，不再参与车前精定位。
+- 当前尚未接回完整 Pick→Place 入口；下一步先从 Place 2.4 第 0 帧提取托板几何参考，再实现实时前后、槽位左右和 yaw 的多轮精调。
+
 ## 2026-08-19（Asia/Shanghai）
 
 - Stage 1 Pick 切换到新录制 `/home/unix_ai/DataCollector/DataReplay_v3/v3_assets/takes/20260819_libraryrobot_datareplay/pi05_wanda_dr1.2_20260819_195231.h5`。资产为 333 帧、约 16.6 秒；底盘前进段积分约 267.6 mm、回退段约 277.8 mm，角速度全程为零。collector 没有 D01 action/status，用户确认吸盘在录制开始约 1 秒后开启，因此 sidecar 事件改为发布 frame 20 后异步执行。

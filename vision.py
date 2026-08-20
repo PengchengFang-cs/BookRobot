@@ -476,7 +476,7 @@ class Vision:
 
         return tuple(detect(frame) for frame in frames)
 
-    def find_cart(self, *, require_body_target=False):
+    def find_cart(self):
         """Return one cart-loading observation without any robot motion."""
 
         started = time.monotonic()
@@ -498,10 +498,7 @@ class Vision:
             self.last_capture_ns = snapshot.captured_at_ns
             try:
                 result = self._detect_cart_once(snapshot, joints)
-                if (
-                    result is not None
-                    and (not require_body_target or result.body_target is not None)
-                ):
+                if result is not None:
                     return result
                 print("[视觉] 当前帧没有检测到可用的小推车整体深度点")
             except Exception as error:

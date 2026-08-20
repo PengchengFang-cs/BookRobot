@@ -38,18 +38,6 @@ class BookPickRun:
 
 
 @dataclass(frozen=True)
-class BookPlaceRun:
-    navigation: object
-    replay: object
-
-
-@dataclass(frozen=True)
-class BookPickPlaceRun:
-    pick: BookPickRun
-    place: BookPlaceRun
-
-
-@dataclass(frozen=True)
 class StableLocatedBook:
     observation: object
     geometry: object
@@ -316,49 +304,6 @@ def run_book_pick_once(
         f"D01 holding={replay.d01_holding if replay.d01_holding is not None else '未检查'}"
     )
     return BookPickRun(alignment=alignment, replay=replay)
-
-
-def run_book_place_once(cart_navigator, replayer, say=print):
-    """Navigate from the reviewed table point and replay one cart Place."""
-
-    say("保持右吸盘开启，扫描小推车并按直角路线前往对应槽位")
-    navigation = cart_navigator.navigate()
-    say(_format_navigation("小推车地图导航反馈", navigation))
-    say("恢复 DataReplay 2.4 第0帧姿态并开始原速 Place")
-    replay = replayer.place()
-    say(
-        f"Place 回放完成: frames={replay.frames_sent}, "
-        f"torso target={replay.torso_target_m:.3f} m, "
-        f"actual={replay.torso_actual_m:.3f} m, "
-        f"D01 released={replay.d01_released}"
-    )
-    return BookPlaceRun(navigation=navigation, replay=replay)
-
-
-def run_book_pick_place_once(
-    vision,
-    pick_navigator,
-    pick_replayer,
-    replay_reference,
-    cart_navigator,
-    place_replayer,
-    say=print,
-    coarse=False,
-    press_m=0.0,
-):
-    """Run one complete table Pick followed immediately by one cart Place."""
-
-    pick = run_book_pick_once(
-        vision,
-        pick_navigator,
-        pick_replayer,
-        replay_reference,
-        say=say,
-        coarse=coarse,
-        press_m=press_m,
-    )
-    place = run_book_place_once(cart_navigator, place_replayer, say=say)
-    return BookPickPlaceRun(pick=pick, place=place)
 
 
 def run_one_fruit(fruit, vision, navigation, arm, say=print):
