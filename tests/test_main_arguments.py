@@ -62,6 +62,13 @@ class MainArgumentTests(unittest.TestCase):
 
         self.assertEqual(args.book_place_resume_final_segments, 2)
 
+        from pathlib import Path
+
+        run_script = (Path(__file__).resolve().parents[1] / "run.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(" --book-place-resume-final-segments ", run_script)
+
     def test_accepts_explicit_coarse_positioning_for_pick(self):
         with patch.object(
             sys,

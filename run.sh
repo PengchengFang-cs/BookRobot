@@ -21,6 +21,7 @@ export PYTHONUNBUFFERED=1
 if [[ " $* " == *" --book-align "* || \
       " $* " == *" --book-pick "* || \
       " $* " == *" --book-place "* || \
+      " $* " == *" --book-place-resume-final-segments "* || \
       " $* " == *" --book-pick-place "* ]]; then
   source "$DIR/scripts/book_vision_env.sh"
   exec python3 "$DIR/main.py" "$@"
