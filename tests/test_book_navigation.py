@@ -1,5 +1,4 @@
 import math
-from pathlib import Path
 import unittest
 from types import SimpleNamespace
 from tempfile import TemporaryDirectory
@@ -112,6 +111,24 @@ class _Runtime:
 
 class BookNavigationTests(unittest.TestCase):
     @staticmethod
+    def _batch_vision(carts, events=None):
+        events = [] if events is None else events
+
+        def capture_cart_frame(*, scan_angle_deg):
+            events.append(("capture", scan_angle_deg))
+            return SimpleNamespace(scan_angle_deg=scan_angle_deg)
+
+        def detect_cart_frames_parallel(frames):
+            frames = tuple(frames)
+            events.append(("detect_batch", len(frames)))
+            return tuple(carts)
+
+        return SimpleNamespace(
+            capture_cart_frame=capture_cart_frame,
+            detect_cart_frames_parallel=detect_cart_frames_parallel,
+        )
+
+    @staticmethod
     def _cart_seen_from_pose(pose, *, confidence, origin_center=(1.8, 0.5, 0.7)):
         x, y, yaw = pose
         cosine = math.cos(-yaw)
@@ -144,7 +161,11 @@ class BookNavigationTests(unittest.TestCase):
             slot_centers=tuple(from_origin(slot) for slot in slots),
             confidence=confidence,
         )
-        return SimpleNamespace(platform=platform)
+        angle_deg = int(round(math.degrees(yaw)))
+        return SimpleNamespace(
+            platform=platform,
+            debug_image=f"/tmp/cart_scan_{angle_deg:03d}.jpg",
+        )
 
     @patch("book_navigation.load_navnav_runtime")
     def test_real_runtime_is_loaded_only_when_alignment_starts(self, load_runtime):
@@ -408,27 +429,14 @@ class BookNavigationTests(unittest.TestCase):
             )
             for index, pose in enumerate(scan_poses, 1)
         ]
-        with TemporaryDirectory() as root:
-            debug_path = Path(root) / "last_detection.jpg"
-
-            def find_cart():
-                sample_number = CART_SCAN_STEPS - len(carts) + 1
-                debug_path.write_bytes(str(sample_number).encode("ascii"))
-                return carts.pop(0)
-
-            vision = SimpleNamespace(
-                find_cart=find_cart,
-                debug_path=debug_path,
-            )
-            result = Stage1CartMapNavigator(
-                runtime,
-                vision=vision,
-                book_index=2,
-                scan_only=True,
-            ).navigate()
-            selected_path = Path(result.selected_scan_debug_image)
-            self.assertEqual(selected_path.name, "cart_scan_045.jpg")
-            self.assertEqual(selected_path.read_bytes(), b"3")
+        events = []
+        vision = self._batch_vision(carts, events)
+        result = Stage1CartMapNavigator(
+            runtime,
+            vision=vision,
+            book_index=2,
+            scan_only=True,
+        ).navigate()
 
         commands = [row for row, _precision in runtime.adapter.executed]
         self.assertEqual(result.mode, "cart-scan-only")
@@ -439,13 +447,18 @@ class BookNavigationTests(unittest.TestCase):
             math.isclose(row.value, CART_SCAN_STEP_RAD) for row in commands
         ))
         self.assertAlmostEqual(result.selected_scan_yaw_rad, math.radians(45.0))
+        self.assertEqual(result.selected_scan_debug_image, "/tmp/cart_scan_045.jpg")
         self.assertEqual(result.slot_index, 2)
         for actual, expected in zip(
             result.slot_center_origin_m,
             (1.8, 0.6, 0.7),
         ):
             self.assertAlmostEqual(actual, expected)
-        self.assertEqual(carts, [])
+        self.assertEqual(
+            events,
+            [("capture", angle) for angle in (15, 30, 45, 60, 75, 90)]
+            + [("detect_batch", 6)],
+        )
         self.assertEqual(runtime.adapter.yaw_corrections, [])
         self.assertTrue(runtime.adapter.stopped)
 
@@ -472,7 +485,7 @@ class BookNavigationTests(unittest.TestCase):
             )
             for index, pose in enumerate(scan_poses, 1)
         ]
-        vision = SimpleNamespace(find_cart=lambda: carts.pop(0))
+        vision = self._batch_vision(carts)
 
         result = Stage1CartMapNavigator(
             runtime,
@@ -510,7 +523,7 @@ class BookNavigationTests(unittest.TestCase):
             for index in range(1, CART_SCAN_STEPS + 1)
         )
         runtime = _Runtime([], pose_readings=scan_poses + (scan_poses[-1],))
-        vision = SimpleNamespace(find_cart=lambda: None)
+        vision = self._batch_vision([None] * CART_SCAN_STEPS)
 
         with self.assertRaisesRegex(RuntimeError, "没有获得可用的小推车顶面"):
             Stage1CartMapNavigator(runtime, vision=vision, scan_only=True).navigate()

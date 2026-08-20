@@ -4,7 +4,6 @@ from dataclasses import dataclass
 import importlib
 import math
 from pathlib import Path
-import shutil
 import sys
 from types import SimpleNamespace
 
@@ -236,6 +235,7 @@ class Stage1CartMapNavigator:
     def _navigate_with_cart_scan(self, adapter):
         commands_sent = 0
         candidates = []
+        captures = []
         try:
             adapter.preflight()
             starting_yaw = adapter.current_absolute_imu_yaw()
@@ -259,13 +259,29 @@ class Stage1CartMapNavigator:
                 adapter.execute_command(turn, precision_mode=True)
                 commands_sent += 1
                 pose = adapter.current_task_pose()
-                cart = self.vision.find_cart()
+                capture = self.vision.capture_cart_frame(
+                    scan_angle_deg=step * 15,
+                )
+                if capture is not None:
+                    captures.append((pose, capture))
+
+            carts = self.vision.detect_cart_frames_parallel(
+                capture for _pose, capture in captures
+            )
+            for (capture_pose, _capture), cart in zip(captures, carts):
                 if cart is None or cart.platform is None:
                     continue
-                platform = transform_cart_platform_to_origin(cart.platform, pose)
-                debug_image = _preserve_cart_scan_image(self.vision, step)
+                platform = transform_cart_platform_to_origin(
+                    cart.platform,
+                    capture_pose,
+                )
                 candidates.append(
-                    (platform.confidence, float(pose.yaw), platform, debug_image)
+                    (
+                        platform.confidence,
+                        float(capture_pose.yaw),
+                        platform,
+                        cart.debug_image,
+                    )
                 )
 
             pose = adapter.current_task_pose()
@@ -358,21 +374,6 @@ def _rotate_xy(value, yaw):
         cosine * float(value[0]) - sine * float(value[1]),
         sine * float(value[0]) + cosine * float(value[1]),
     )
-
-
-def _preserve_cart_scan_image(vision, step):
-    source_value = getattr(vision, "debug_path", None)
-    if source_value is None:
-        return None
-    source = Path(source_value)
-    if not source.is_file():
-        return None
-    angle_deg = int(step) * 15
-    destination = source.with_name(
-        f"cart_scan_{angle_deg:03d}{source.suffix or '.jpg'}"
-    )
-    shutil.copyfile(source, destination)
-    return str(destination)
 
 
 def transform_cart_platform_to_origin(platform, pose):

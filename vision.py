@@ -1,5 +1,6 @@
 """视觉积木：5090 分割书本，机器人本地用深度计算吸取点。"""
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import time
 from pathlib import Path
@@ -52,6 +53,14 @@ class LocatedCart:
     platform: object
     frame_id: str
     captured_at_ns: int
+    debug_image: str | None = None
+
+
+@dataclass(frozen=True)
+class CapturedCartFrame:
+    snapshot: object
+    joints: dict
+    scan_angle_deg: int
 
 
 class Vision:
@@ -245,7 +254,14 @@ class Vision:
             depth /= 1000.0
         return color, depth
 
-    def _detect_cart_once(self, snapshot, joints):
+    def _detect_cart_once(
+        self,
+        snapshot,
+        joints,
+        *,
+        rpc_captured_at_ns=None,
+        debug_path=None,
+    ):
         color, depth = self._snapshot_arrays(snapshot)
         if color is None:
             return None
@@ -253,9 +269,14 @@ class Vision:
         head_yaw = joints["joint_head0"]
         head_pitch = joints["joint_head1"]
         captured_at_ns = snapshot.captured_at_ns
+        rpc_captured_at_ns = (
+            time.time_ns()
+            if rpc_captured_at_ns is None
+            else int(rpc_captured_at_ns)
+        )
         observations = self.book_client.detect_cart(
             color,
-            captured_at_ns=captured_at_ns,
+            captured_at_ns=rpc_captured_at_ns,
             base_motion_epoch=f"fruittest-base-capture-{captured_at_ns}",
             head_motion_epoch=f"fruittest-head-capture-{captured_at_ns}",
         )
@@ -282,15 +303,28 @@ class Vision:
             except CartGeometryError as error:
                 print(f"[视觉] 小推车顶面几何不可用: {error}")
         platform = select_leftmost_cart_platform(platform_candidates)
-        self._save_cart_debug_overlay(color, observations, platform)
+        debug_path = self._save_cart_debug_overlay(
+            color,
+            observations,
+            platform,
+            debug_path=debug_path,
+        )
         return LocatedCart(
             observations=tuple(observations),
             platform=platform,
             frame_id="base_link",
             captured_at_ns=captured_at_ns,
+            debug_image=str(debug_path),
         )
 
-    def _save_cart_debug_overlay(self, color, observations, platform):
+    def _save_cart_debug_overlay(
+        self,
+        color,
+        observations,
+        platform,
+        *,
+        debug_path=None,
+    ):
         overlay = color.copy()
         for observation in observations:
             mask = decode_bbox_rle(
@@ -328,7 +362,71 @@ class Vision:
                     (0, 0, 255),
                     2,
                 )
-        cv2.imwrite(str(self.debug_path), color)
+        debug_path = self.debug_path if debug_path is None else Path(debug_path)
+        cv2.imwrite(str(debug_path), color)
+        return debug_path
+
+    def capture_cart_frame(self, *, scan_angle_deg, timeout_s=3.0):
+        """Capture one synchronized RGB-D frame without calling the 5090."""
+
+        started = time.monotonic()
+        deadline = started + float(timeout_s)
+        needed_joints = ("body_joint", "joint_head0", "joint_head1")
+        while rclpy.ok() and time.monotonic() < deadline:
+            rclpy.spin_once(self.node, timeout_sec=0.10)
+            selected = self.sensor_sync.select(
+                arrived_after_s=started,
+                captured_after_ns=self.last_capture_ns,
+                required_joints=needed_joints,
+            )
+            if selected is None:
+                continue
+            snapshot, joints = selected
+            self.last_capture_ns = snapshot.captured_at_ns
+            return CapturedCartFrame(
+                snapshot=snapshot,
+                joints=dict(joints),
+                scan_angle_deg=int(scan_angle_deg),
+            )
+        return None
+
+    def detect_cart_frames_parallel(self, frames):
+        """Submit all captured scan frames together after rotation has stopped."""
+
+        frames = tuple(frame for frame in frames if frame is not None)
+        if not frames:
+            return ()
+
+        def detect(frame):
+            debug_path = self.debug_path.with_name(
+                f"cart_scan_{frame.scan_angle_deg:03d}.jpg"
+            )
+            try:
+                return self._detect_cart_once(
+                    frame.snapshot,
+                    frame.joints,
+                    rpc_captured_at_ns=time.time_ns(),
+                    debug_path=debug_path,
+                )
+            except Exception as error:
+                self.node.get_logger().warning(
+                    f"小推车并行检测帧不能用: {error}"
+                )
+                print(
+                    "[视觉] 小推车并行检测帧不能用: "
+                    f"{type(error).__name__}: {error}"
+                )
+                return None
+
+        results = [None] * len(frames)
+        with ThreadPoolExecutor(max_workers=len(frames)) as executor:
+            futures = {
+                executor.submit(detect, frame): index
+                for index, frame in enumerate(frames)
+            }
+            for future in as_completed(futures):
+                results[futures[future]] = future.result()
+        return tuple(results)
 
     def find_cart(self):
         """Return one cart-loading observation without any robot motion."""

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import importlib.util
 from pathlib import Path
+import threading
 import time
 import uuid
 
@@ -119,6 +120,7 @@ class BookVisionClient:
         self._channel = None
         self._rpc = rpc or self._build_rpc()
         self._sequence = 0
+        self._sequence_lock = threading.Lock()
 
     @classmethod
     def from_config(cls):
@@ -202,7 +204,9 @@ class BookVisionClient:
         if not base_motion_epoch or not head_motion_epoch:
             raise BookVisionError("book_vision_motion_epoch_missing")
 
-        self._sequence += 1
+        with self._sequence_lock:
+            self._sequence += 1
+            sequence = self._sequence
         now_ns = self._clock_ns()
         lifetime_ns = int(self.settings.timeout_s * 1_000_000_000)
         deadline_ns = captured_at_ns + lifetime_ns
@@ -217,7 +221,7 @@ class BookVisionClient:
         header.stage_id = "perception-test"
         header.request_id = request_id
         header.correlation_id = request_id
-        header.sequence = self._sequence
+        header.sequence = sequence
         # The reviewed service requires issued <= not_before <= capture <= now.
         # This request is born from one already-captured image, so its lifetime
         # starts at that capture rather than at the later RPC construction time.
