@@ -179,7 +179,7 @@ def detect_cart_black_marker_pixels(
     *,
     color_bgr,
     observation,
-    gray_threshold=160,
+    gray_threshold=60,
 ):
     """Return back-left/back-right/front-left/front-right marker centers."""
 
@@ -200,7 +200,6 @@ def detect_cart_black_marker_pixels(
         raise CartGeometryError("opencv_unavailable") from error
 
     x, y, width, height = observation.bbox
-    bbox_area = float(width * height)
     search = np.zeros(expected_shape, dtype=bool)
     search[y:y + height, x:x + width] = True
     gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
@@ -209,30 +208,11 @@ def detect_cart_black_marker_pixels(
         dark, connectivity=8
     )
 
-    minimum_area = max(8, int(round(bbox_area * 0.00008)))
-    maximum_area = max(minimum_area, int(round(bbox_area * 0.00080)))
     candidates = []
     for label in range(1, count):
-        left, top, component_width, component_height, area = (
+        left, top, component_width, component_height, _area = (
             int(value) for value in stats[label]
         )
-        if not minimum_area <= area <= maximum_area:
-            continue
-        if not (
-            max(4, int(round(width * 0.010)))
-            <= component_width
-            <= max(8, int(round(width * 0.070)))
-        ):
-            continue
-        if not (
-            max(2, int(round(height * 0.004)))
-            <= component_height
-            <= max(5, int(round(height * 0.040)))
-        ):
-            continue
-        aspect_ratio = component_width / component_height
-        if not 1.2 <= aspect_ratio <= 6.0:
-            continue
         center_column, center_row = (float(value) for value in centers[label])
         candidates.append((
             center_column,
