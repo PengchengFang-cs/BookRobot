@@ -179,7 +179,7 @@ def detect_cart_black_marker_pixels(
     *,
     color_bgr,
     observation,
-    gray_threshold=60,
+    gray_threshold=100,
 ):
     """Return back-left/back-right/front-left/front-right marker centers."""
 
@@ -215,6 +215,9 @@ def detect_cart_black_marker_pixels(
             int(value) for value in stats[label]
         )
         if area < minimum_area:
+            continue
+        aspect_ratio = component_width / component_height
+        if not 0.5 <= aspect_ratio <= 6.0:
             continue
         center_column, center_row = (float(value) for value in centers[label])
         candidates.append((
@@ -252,7 +255,7 @@ def reconstruct_cart_marker_platform(
     slot_offsets_from_left_m=(0.17, 0.24, 0.31, 0.38, 0.45),
     platform_width_m=0.75,
     platform_depth_m=0.29,
-    gray_threshold=60,
+    gray_threshold=100,
     minimum_depth_m=0.20,
     maximum_depth_m=3.0,
 ):
