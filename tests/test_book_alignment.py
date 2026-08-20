@@ -156,7 +156,7 @@ class BookAlignmentTests(unittest.TestCase):
                 replay_reference=_reference(),
             )
 
-    def test_new_loop_selects_highest_confidence_visible_book(self):
+    def test_new_loop_selects_rightmost_visible_book(self):
         angle = math.radians(10.0)
         partly_occluded_nearest = _book(
             (0.71, -0.39, 0.72),
@@ -171,7 +171,7 @@ class BookAlignmentTests(unittest.TestCase):
             replay_reference=_reference(),
         )
 
-        self.assertIs(selected, clear_farther)
+        self.assertIs(selected, partly_occluded_nearest)
 
     def test_reassociation_uses_nearest_prediction_without_size_yaw_or_distance_gate(self):
         angle = math.radians(20.0)

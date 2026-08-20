@@ -63,7 +63,7 @@ def build_replay_alignment_target(*, book, replay_reference):
 
 
 def select_replay_book(books, *, replay_reference):
-    """Choose the clearest current book for a fresh Pick loop."""
+    """Choose the rightmost visible book for a fresh Pick loop."""
 
     if not books:
         raise RuntimeError("没有检测到可精确对位的书本")
@@ -76,9 +76,9 @@ def select_replay_book(books, *, replay_reference):
         distance_squared = sum(
             (point[index] - reference[index]) ** 2 for index in (0, 1)
         )
-        return float(book.geometry.confidence), -distance_squared
+        return point[1], -float(book.geometry.confidence), distance_squared
 
-    return max(books, key=rank)
+    return min(books, key=rank)
 
 
 def predict_book_after_base_motion(
