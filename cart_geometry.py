@@ -375,12 +375,6 @@ def reconstruct_cart_marker_platform(
     front_edge = center - forward_axis * half_depth
     left_edge = center + lateral_axis * half_width
     right_edge = center - lateral_axis * half_width
-    corners = (
-        center - forward_axis * half_depth + lateral_axis * half_width,
-        center + forward_axis * half_depth + lateral_axis * half_width,
-        center + forward_axis * half_depth - lateral_axis * half_width,
-        center - forward_axis * half_depth - lateral_axis * half_width,
-    )
     slot_centers = tuple(
         tuple(float(value) for value in (
             center + lateral_axis * (half_width - offset)
@@ -388,21 +382,6 @@ def reconstruct_cart_marker_platform(
         for offset in slot_offsets
     )
 
-    base_points, rows, columns, _mask = _masked_base_points(
-        observation=observation,
-        depth_m=depth,
-        intrinsics=intrinsics,
-        camera_to_base=camera_to_base,
-        minimum_depth_m=minimum_depth_m,
-        maximum_depth_m=maximum_depth_m,
-    )
-    slot_pixels = tuple(
-        _nearest_pixel(np.asarray(point), base_points, rows, columns)
-        for point in slot_centers
-    )
-    outline_pixels = tuple(
-        _nearest_pixel(point, base_points, rows, columns) for point in corners
-    )
     return CartPlatformGeometry(
         center=tuple(float(value) for value in center),
         forward_axis=tuple(float(value) for value in forward_axis),
@@ -411,11 +390,11 @@ def reconstruct_cart_marker_platform(
         depth_extent_m=float(platform_depth_m),
         lateral_extent_m=float(platform_width_m),
         slot_centers=slot_centers,
-        slot_pixels=slot_pixels,
+        slot_pixels=(),
         front_edge=tuple(float(value) for value in front_edge),
         left_edge=tuple(float(value) for value in left_edge),
         right_edge=tuple(float(value) for value in right_edge),
-        outline_pixels=outline_pixels,
+        outline_pixels=(),
         confidence=float(observation.confidence),
     )
 
