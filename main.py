@@ -175,6 +175,15 @@ def run_real(args):
                     "platform_depth_extent_m": (
                         None if platform is None else platform.depth_extent_m
                     ),
+                    "platform_front_edge_m": (
+                        None if platform is None else platform.front_edge
+                    ),
+                    "platform_left_edge_m": (
+                        None if platform is None else platform.left_edge
+                    ),
+                    "platform_right_edge_m": (
+                        None if platform is None else platform.right_edge
+                    ),
                     "slot_centers_m": (
                         [] if platform is None else platform.slot_centers
                     ),

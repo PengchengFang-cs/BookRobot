@@ -1,4 +1,4 @@
-"""ROS-free cart-platform geometry and five equal placement slots."""
+"""ROS-free cart geometry used by coarse and fine cart alignment."""
 
 from dataclasses import dataclass
 from typing import Callable, Sequence
@@ -23,6 +23,10 @@ class CartPlatformGeometry:
     lateral_extent_m: float
     slot_centers: tuple[tuple[float, float, float], ...]
     slot_pixels: tuple[tuple[int, int], ...]
+    front_edge: tuple[float, float, float]
+    left_edge: tuple[float, float, float]
+    right_edge: tuple[float, float, float]
+    outline_pixels: tuple[tuple[int, int], ...]
     confidence: float
 
 
@@ -128,6 +132,197 @@ def select_leftmost_cart_platform(platforms):
 
 def _fail(code):
     raise CartGeometryError(code)
+
+
+def _masked_base_points(
+    *, observation, depth_m, intrinsics, camera_to_base,
+    minimum_depth_m, maximum_depth_m,
+):
+    depth = np.asarray(depth_m, dtype=float)
+    expected_shape = (observation.image_height, observation.image_width)
+    if depth.shape != expected_shape:
+        _fail("depth_shape_mismatch")
+    mask = decode_bbox_rle(
+        image_shape=expected_shape,
+        bbox=observation.bbox,
+        counts=observation.rle_counts,
+    )
+    valid = (
+        mask
+        & np.isfinite(depth)
+        & (depth >= float(minimum_depth_m))
+        & (depth <= float(maximum_depth_m))
+    )
+    rows, columns = np.nonzero(valid)
+    z = depth[rows, columns]
+    camera_points = np.column_stack((
+        (columns - intrinsics.cx) * z / intrinsics.fx,
+        (rows - intrinsics.cy) * z / intrinsics.fy,
+        z,
+    ))
+    try:
+        base_points = np.asarray(
+            [camera_to_base(tuple(point)) for point in camera_points],
+            dtype=float,
+        )
+    except Exception as error:
+        raise CartGeometryError("camera_transform_failed") from error
+    finite = np.all(np.isfinite(base_points), axis=1)
+    return base_points[finite], rows[finite], columns[finite], mask
+
+
+def _nearest_pixel(point, base_points, rows, columns):
+    nearest = int(np.argmin(np.sum((base_points - point) ** 2, axis=1)))
+    return int(columns[nearest]), int(rows[nearest])
+
+
+def reconstruct_cart_top_platform(
+    *,
+    observation,
+    depth_m,
+    intrinsics,
+    camera_to_base: Callable[[tuple[float, float, float]], Sequence[float]],
+    slot_offsets_from_left_m=(0.17, 0.24, 0.31, 0.38, 0.45),
+    minimum_depth_m=0.20,
+    maximum_depth_m=3.0,
+    height_bin_m=0.012,
+    plane_tolerance_m=0.012,
+    minimum_depth_points=128,
+    minimum_lateral_extent_m=0.42,
+    minimum_forward_extent_m=0.12,
+):
+    """Extract the highest broad horizontal shelf inside a whole-cart mask."""
+
+    if not isinstance(observation, SceneMask):
+        _fail("cart_mask_invalid")
+    if observation.semantic_class != "cart_body":
+        _fail("cart_body_mask_required")
+    if not isinstance(intrinsics, CameraIntrinsics):
+        _fail("camera_intrinsics_invalid")
+    if not callable(camera_to_base):
+        _fail("camera_transform_invalid")
+
+    slot_offsets = tuple(float(value) for value in slot_offsets_from_left_m)
+    if not slot_offsets or any(
+        not np.isfinite(value) or value <= 0.0 for value in slot_offsets
+    ):
+        _fail("cart_slot_offsets_invalid")
+
+    base_points, rows, columns, mask = _masked_base_points(
+        observation=observation,
+        depth_m=depth_m,
+        intrinsics=intrinsics,
+        camera_to_base=camera_to_base,
+        minimum_depth_m=minimum_depth_m,
+        maximum_depth_m=maximum_depth_m,
+    )
+    if base_points.shape[0] < int(minimum_depth_points):
+        _fail("insufficient_cart_body_depth")
+
+    heights = base_points[:, 2]
+    low = float(np.min(heights))
+    bins = np.floor((heights - low) / float(height_bin_m)).astype(int)
+    populated_bins = np.nonzero(np.bincount(bins))[0]
+    chosen = None
+    # Inspect from top to bottom. Posts spread over many height bins; a shelf
+    # contributes a broad, dense horizontal band.
+    for bin_index in populated_bins[::-1]:
+        height_center = low + (float(bin_index) + 0.5) * float(height_bin_m)
+        near = np.abs(heights - height_center) <= float(plane_tolerance_m)
+        if int(np.count_nonzero(near)) < int(minimum_depth_points):
+            continue
+        candidate = base_points[near]
+        center_xy = np.median(candidate[:, :2], axis=0)
+        centered_xy = candidate[:, :2] - center_xy
+        _u, singular, axes_xy = np.linalg.svd(centered_xy, full_matrices=False)
+        if singular.size != 2 or singular[1] <= 1e-6:
+            continue
+        axes = [axes_xy[0].copy(), axes_xy[1].copy()]
+        lateral_index = int(abs(axes[1][1]) > abs(axes[0][1]))
+        lateral_xy = axes[lateral_index]
+        forward_xy = axes[1 - lateral_index]
+        if lateral_xy[1] < 0.0:
+            lateral_xy = -lateral_xy
+        if forward_xy[0] < 0.0:
+            forward_xy = -forward_xy
+        lateral_projection = centered_xy @ lateral_xy
+        forward_projection = centered_xy @ forward_xy
+        lateral_min, lateral_max = np.percentile(lateral_projection, (2.0, 98.0))
+        forward_min, forward_max = np.percentile(forward_projection, (2.0, 98.0))
+        lateral_extent = float(lateral_max - lateral_min)
+        forward_extent = float(forward_max - forward_min)
+        if (
+            lateral_extent < float(minimum_lateral_extent_m)
+            or forward_extent < float(minimum_forward_extent_m)
+        ):
+            continue
+        chosen = (
+            near, candidate, center_xy, forward_xy, lateral_xy,
+            float(forward_min), float(forward_max),
+            float(lateral_min), float(lateral_max),
+            forward_extent, lateral_extent,
+        )
+        break
+
+    if chosen is None:
+        _fail("cart_top_platform_not_found")
+
+    (
+        near, plane_points, center_xy, forward_xy, lateral_xy,
+        forward_min, forward_max, lateral_min, lateral_max,
+        forward_extent, lateral_extent,
+    ) = chosen
+    plane_rows = rows[near]
+    plane_columns = columns[near]
+    plane_z = float(np.median(plane_points[:, 2]))
+    center = np.array((center_xy[0], center_xy[1], plane_z), dtype=float)
+    forward_axis = np.array((forward_xy[0], forward_xy[1], 0.0), dtype=float)
+    lateral_axis = np.array((lateral_xy[0], lateral_xy[1], 0.0), dtype=float)
+    normal = np.array((0.0, 0.0, 1.0), dtype=float)
+    forward_mid = (forward_min + forward_max) / 2.0
+    lateral_mid = (lateral_min + lateral_max) / 2.0
+
+    front_edge = center + forward_axis * forward_min + lateral_axis * lateral_mid
+    left_edge = center + forward_axis * forward_mid + lateral_axis * lateral_max
+    right_edge = center + forward_axis * forward_mid + lateral_axis * lateral_min
+    corners = (
+        center + forward_axis * forward_min + lateral_axis * lateral_max,
+        center + forward_axis * forward_max + lateral_axis * lateral_max,
+        center + forward_axis * forward_max + lateral_axis * lateral_min,
+        center + forward_axis * forward_min + lateral_axis * lateral_min,
+    )
+
+    slot_centers = []
+    slot_pixels = []
+    for offset in slot_offsets:
+        point = center + forward_axis * forward_mid + lateral_axis * (
+            lateral_max - offset
+        )
+        slot_centers.append(tuple(float(value) for value in point))
+        slot_pixels.append(_nearest_pixel(
+            point, plane_points, plane_rows, plane_columns
+        ))
+
+    outline_pixels = tuple(
+        _nearest_pixel(point, plane_points, plane_rows, plane_columns)
+        for point in corners
+    )
+    valid_fraction = min(1.0, float(plane_points.shape[0]) / max(1, int(mask.sum())))
+    return CartPlatformGeometry(
+        center=tuple(float(value) for value in center),
+        forward_axis=tuple(float(value) for value in forward_axis),
+        lateral_axis_right_to_left=tuple(float(value) for value in lateral_axis),
+        normal=tuple(float(value) for value in normal),
+        depth_extent_m=forward_extent,
+        lateral_extent_m=lateral_extent,
+        slot_centers=tuple(slot_centers),
+        slot_pixels=tuple(slot_pixels),
+        front_edge=tuple(float(value) for value in front_edge),
+        left_edge=tuple(float(value) for value in left_edge),
+        right_edge=tuple(float(value) for value in right_edge),
+        outline_pixels=outline_pixels,
+        confidence=float(observation.confidence) * valid_fraction,
+    )
 
 
 def reconstruct_cart_platform(
@@ -245,5 +440,15 @@ def reconstruct_cart_platform(
         lateral_extent_m=lateral_extent,
         slot_centers=tuple(slot_centers),
         slot_pixels=tuple(slot_pixels),
+        front_edge=tuple(float(value) for value in (
+            center + forward_axis * float(forward_min)
+        )),
+        left_edge=tuple(float(value) for value in (
+            center + lateral_axis * float(lateral_max)
+        )),
+        right_edge=tuple(float(value) for value in (
+            center + lateral_axis * float(lateral_min)
+        )),
+        outline_pixels=(),
         confidence=float(observation.confidence) * valid_fraction,
     )

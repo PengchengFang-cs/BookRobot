@@ -7,11 +7,48 @@ from book_rpc import SceneMask
 from cart_geometry import (
     reconstruct_cart_body_target,
     reconstruct_cart_platform,
+    reconstruct_cart_top_platform,
     select_leftmost_cart_platform,
 )
 
 
 class CartGeometryTests(unittest.TestCase):
+    def test_extracts_highest_broad_plane_and_uses_measured_slot_spacing(self):
+        observation = SceneMask(
+            semantic_class="cart_body",
+            scene_profile_id="cart_loading_v1",
+            confidence=0.9,
+            bbox=(20, 20, 240, 160),
+            rle_counts=(0, 38_400),
+            image_width=300,
+            image_height=200,
+        )
+        depth = np.zeros((200, 300), dtype=float)
+        depth[40:130, 30:270] = 1.00
+        depth[145:180, 70:230] = 0.72
+
+        result = reconstruct_cart_top_platform(
+            observation=observation,
+            depth_m=depth,
+            intrinsics=CameraIntrinsics(300.0, 300.0, 150.0, 100.0),
+            camera_to_base=lambda point: (point[1], point[0], point[2]),
+        )
+
+        self.assertAlmostEqual(result.center[2], 1.0, places=6)
+        self.assertGreater(result.lateral_extent_m, 0.70)
+        self.assertGreater(result.depth_extent_m, 0.25)
+        self.assertEqual(len(result.slot_centers), 5)
+        left = np.asarray(result.left_edge)
+        lateral = np.asarray(result.lateral_axis_right_to_left)
+        offsets = [
+            float(np.dot(left - np.asarray(point), lateral))
+            for point in result.slot_centers
+        ]
+        np.testing.assert_allclose(
+            offsets, (0.17, 0.24, 0.31, 0.38, 0.45), atol=0.01
+        )
+        self.assertEqual(len(result.outline_pixels), 4)
+
     def test_cart_body_target_uses_mask_center_depth_not_bbox_background(self):
         observation = SceneMask(
             semantic_class="cart_body",

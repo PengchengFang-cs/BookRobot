@@ -19,6 +19,7 @@ from cart_geometry import (
     CartGeometryError,
     reconstruct_cart_body_target,
     reconstruct_cart_platform,
+    reconstruct_cart_top_platform,
     select_leftmost_cart_platform,
 )
 from config import (
@@ -304,6 +305,9 @@ class Vision:
                     body_candidates.append(reconstruct_cart_body_target(
                         **geometry_args
                     ))
+                    platform_candidates.append(reconstruct_cart_top_platform(
+                        **geometry_args
+                    ))
                 elif observation.semantic_class == "cart_platform":
                     platform_candidates.append(reconstruct_cart_platform(
                         **geometry_args
@@ -378,15 +382,25 @@ class Vision:
                 2,
             )
         if platform is not None:
+            if platform.outline_pixels:
+                cv2.polylines(
+                    color,
+                    [np.asarray(platform.outline_pixels, dtype=np.int32)],
+                    True,
+                    (0, 255, 0),
+                    3,
+                )
             for index, pixel in enumerate(platform.slot_pixels, 1):
-                cv2.circle(color, pixel, 9, (0, 0, 255), -1)
+                radius = 14 if index == 1 else 9
+                draw_color = (0, 0, 255) if index == 1 else (255, 0, 255)
+                cv2.circle(color, pixel, radius, draw_color, -1)
                 cv2.putText(
                     color,
-                    str(index),
+                    f"slot {index}",
                     (pixel[0] + 10, pixel[1] - 10),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7,
-                    (0, 0, 255),
+                    draw_color,
                     2,
                 )
         debug_path = self.debug_path if debug_path is None else Path(debug_path)
