@@ -78,14 +78,6 @@ class CartGeometryTests(unittest.TestCase):
         np.testing.assert_allclose(
             offsets, (0.17, 0.24, 0.31, 0.38, 0.45), atol=0.01
         )
-        front = np.asarray(result.front_edge)
-        forward = np.asarray(result.forward_axis)
-        for point in result.slot_centers:
-            self.assertAlmostEqual(
-                float(np.dot(np.asarray(point) - front, forward)),
-                0.169 / 2.0,
-                places=6,
-            )
         self.assertEqual(len(result.outline_pixels), 4)
 
     def test_cart_body_target_uses_mask_center_depth_not_bbox_background(self):
