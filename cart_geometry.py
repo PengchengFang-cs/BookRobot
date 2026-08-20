@@ -191,7 +191,7 @@ def reconstruct_cart_top_platform(
     minimum_lateral_extent_m=0.42,
     minimum_forward_extent_m=0.12,
 ):
-    """Extract the highest broad horizontal shelf inside a whole-cart mask."""
+    """Extract the first usable shelf below the cart's top cover."""
 
     if not isinstance(observation, SceneMask):
         _fail("cart_mask_invalid")
@@ -223,9 +223,10 @@ def reconstruct_cart_top_platform(
     low = float(np.min(heights))
     bins = np.floor((heights - low) / float(height_bin_m)).astype(int)
     populated_bins = np.nonzero(np.bincount(bins))[0]
-    chosen = None
-    # Inspect from top to bottom. Posts spread over many height bins; a shelf
-    # contributes a broad, dense horizontal band.
+    candidates = []
+    # Inspect from top to bottom. Posts spread over many height bins; broad
+    # horizontal surfaces form dense bands.  The first unique surface is the
+    # cart's solid top cover; the next one is the upper loading shelf.
     for bin_index in populated_bins[::-1]:
         height_center = low + (float(bin_index) + 0.5) * float(height_bin_m)
         near = np.abs(heights - height_center) <= float(plane_tolerance_m)
@@ -256,16 +257,23 @@ def reconstruct_cart_top_platform(
             or forward_extent < float(minimum_forward_extent_m)
         ):
             continue
-        chosen = (
+        candidate_geometry = (
             near, candidate, center_xy, forward_xy, lateral_xy,
             float(forward_min), float(forward_max),
             float(lateral_min), float(lateral_max),
             forward_extent, lateral_extent,
         )
-        break
+        candidate_height = float(np.median(candidate[:, 2]))
+        if any(
+            abs(candidate_height - existing[0]) <= 2.0 * float(plane_tolerance_m)
+            for existing in candidates
+        ):
+            continue
+        candidates.append((candidate_height, candidate_geometry))
 
-    if chosen is None:
+    if len(candidates) < 2:
         _fail("cart_top_platform_not_found")
+    _height, chosen = candidates[1]
 
     (
         near, plane_points, center_xy, forward_xy, lateral_xy,

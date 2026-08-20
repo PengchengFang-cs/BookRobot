@@ -13,7 +13,7 @@ from cart_geometry import (
 
 
 class CartGeometryTests(unittest.TestCase):
-    def test_extracts_highest_broad_plane_and_uses_measured_slot_spacing(self):
+    def test_skips_top_cover_and_uses_upper_loading_shelf_spacing(self):
         observation = SceneMask(
             semantic_class="cart_body",
             scene_profile_id="cart_loading_v1",
@@ -24,8 +24,9 @@ class CartGeometryTests(unittest.TestCase):
             image_height=200,
         )
         depth = np.zeros((200, 300), dtype=float)
-        depth[40:130, 30:270] = 1.00
-        depth[145:180, 70:230] = 0.72
+        depth[30:70, 30:270] = 1.00
+        depth[80:140, 30:270] = 0.82
+        depth[150:180, 70:230] = 0.62
 
         result = reconstruct_cart_top_platform(
             observation=observation,
@@ -34,9 +35,9 @@ class CartGeometryTests(unittest.TestCase):
             camera_to_base=lambda point: (point[1], point[0], point[2]),
         )
 
-        self.assertAlmostEqual(result.center[2], 1.0, places=6)
-        self.assertGreater(result.lateral_extent_m, 0.70)
-        self.assertGreater(result.depth_extent_m, 0.25)
+        self.assertAlmostEqual(result.center[2], 0.82, places=6)
+        self.assertGreater(result.lateral_extent_m, 0.55)
+        self.assertGreater(result.depth_extent_m, 0.14)
         self.assertEqual(len(result.slot_centers), 5)
         left = np.asarray(result.left_edge)
         lateral = np.asarray(result.lateral_axis_right_to_left)
