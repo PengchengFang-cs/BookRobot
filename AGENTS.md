@@ -1,5 +1,20 @@
 # fpc workspace policy
 
+## Skill policy
+
+- Within `/home/cvailab/fpc`, do not invoke, read, or follow any
+  `superpowers:*` skill unless the user explicitly names that exact skill in
+  the current request.
+- Coding, debugging, planning, testing, or behavior changes do not by
+  themselves authorize using `superpowers:*`.
+- Do not create design documents, implementation plans, Git worktrees,
+  copies, subagents, commits, or review workflows because of a
+  `superpowers:*` skill unless explicitly requested.
+- When the user explicitly requests one `superpowers:*` skill, use only that
+  named skill. Do not automatically chain into other skills.
+- Direct user instructions and the shortest task-specific workflow take
+  priority.
+
 ## Writable scope
 
 - The writable RTX 5090 project directories are `/home/cvailab/fpc` and
