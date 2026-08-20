@@ -119,7 +119,7 @@ class CartGeometryTests(unittest.TestCase):
 
         self.assertIs(select_leftmost_cart_platform((table, cart)), cart)
 
-    def test_divides_platform_into_five_right_to_left_slots(self):
+    def test_platform_mask_uses_measured_offsets_from_left_edge(self):
         observation = SceneMask(
             semantic_class="cart_platform",
             scene_profile_id="cart_loading_v1",
@@ -143,9 +143,20 @@ class CartGeometryTests(unittest.TestCase):
         self.assertGreater(result.lateral_extent_m, 0.45)
         self.assertGreater(result.depth_extent_m, 0.20)
         self.assertTrue(all(
-            result.slot_centers[index][1] < result.slot_centers[index + 1][1]
+            result.slot_centers[index][1] > result.slot_centers[index + 1][1]
             for index in range(4)
         ))
+        lateral = np.asarray(result.lateral_axis_right_to_left)
+        left = np.asarray(result.left_edge)
+        measured_offsets = tuple(
+            float(np.dot(left - np.asarray(point), lateral))
+            for point in result.slot_centers
+        )
+        np.testing.assert_allclose(
+            measured_offsets,
+            (0.17, 0.24, 0.31, 0.38, 0.45),
+            atol=1e-9,
+        )
         self.assertTrue(all(abs(point[2] - 1.0) < 1e-9 for point in result.slot_centers))
 
 

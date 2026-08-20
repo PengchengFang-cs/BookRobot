@@ -366,12 +366,12 @@ def reconstruct_cart_platform(
     depth_m,
     intrinsics,
     camera_to_base: Callable[[tuple[float, float, float]], Sequence[float]],
-    slot_count=5,
+    slot_offsets_from_left_m=(0.17, 0.24, 0.31, 0.38, 0.45),
     minimum_depth_m=0.20,
     maximum_depth_m=3.0,
     minimum_depth_points=128,
 ):
-    """Fit the segmented loading plane and divide it right-to-left."""
+    """Fit a segmented loading plane using the same measured slot contract."""
 
     if not isinstance(observation, SceneMask):
         _fail("cart_mask_invalid")
@@ -381,9 +381,11 @@ def reconstruct_cart_platform(
         _fail("camera_intrinsics_invalid")
     if not callable(camera_to_base):
         _fail("camera_transform_invalid")
-    slot_count = int(slot_count)
-    if slot_count < 1:
-        _fail("cart_slot_count_invalid")
+    slot_offsets = tuple(float(value) for value in slot_offsets_from_left_m)
+    if not slot_offsets or any(
+        not np.isfinite(value) or value <= 0.0 for value in slot_offsets
+    ):
+        _fail("cart_slot_offsets_invalid")
 
     depth = np.asarray(depth_m, dtype=float)
     expected_shape = (observation.image_height, observation.image_width)
@@ -454,10 +456,10 @@ def reconstruct_cart_platform(
 
     slot_centers = []
     slot_pixels = []
-    for index in range(slot_count):
-        lateral_offset = float(lateral_min) + (
-            (index + 0.5) * lateral_extent / slot_count
-        )
+    if max(slot_offsets) >= lateral_extent:
+        _fail("cart_platform_too_narrow_for_slots")
+    for offset_from_left in slot_offsets:
+        lateral_offset = float(lateral_max) - offset_from_left
         point = center + forward_axis * forward_mid + lateral_axis * lateral_offset
         point_tuple = tuple(float(value) for value in point)
         slot_centers.append(point_tuple)
