@@ -252,7 +252,7 @@ def reconstruct_cart_marker_platform(
     slot_offsets_from_left_m=(0.17, 0.24, 0.31, 0.38, 0.45),
     platform_width_m=0.75,
     platform_depth_m=0.29,
-    gray_threshold=160,
+    gray_threshold=10,
     minimum_depth_m=0.20,
     maximum_depth_m=3.0,
 ):
