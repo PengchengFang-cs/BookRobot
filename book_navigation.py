@@ -39,6 +39,7 @@ class CartVisualNavigationExecution:
     imu_dyaw_rad: float
     selected_scan_yaw_rad: float
     slot_index: int
+    cart_target_origin_m: tuple[float, float, float]
     slot_center_origin_m: tuple[float, float, float]
     platform_near_x_origin_m: float
     selected_scan_debug_image: str | None
@@ -269,16 +270,22 @@ class Stage1CartMapNavigator:
                 capture for _pose, capture in captures
             )
             for (capture_pose, _capture), cart in zip(captures, carts):
-                if cart is None or cart.platform is None:
+                if cart is None or cart.body_target is None:
                     continue
-                platform = transform_cart_platform_to_origin(
-                    cart.platform,
+                cart_target = transform_cart_body_target_to_origin(
+                    cart.body_target,
                     capture_pose,
+                )
+                platform = (
+                    transform_cart_platform_to_origin(cart.platform, capture_pose)
+                    if cart.platform is not None
+                    else None
                 )
                 candidates.append(
                     (
-                        platform.confidence,
+                        cart_target.confidence,
                         float(capture_pose.yaw),
+                        cart_target,
                         platform,
                         cart.debug_image,
                     )
@@ -286,13 +293,25 @@ class Stage1CartMapNavigator:
 
             pose = adapter.current_task_pose()
             if not candidates:
-                raise RuntimeError("旋转90度期间没有获得可用的小推车顶面")
-            _confidence, selected_scan_yaw, platform, selected_debug_image = max(
+                raise RuntimeError("旋转90度期间没有获得可用的小推车整体深度点")
+            (
+                _confidence,
+                selected_scan_yaw,
+                cart_target,
+                selected_platform,
+                selected_debug_image,
+            ) = max(
                 candidates,
                 key=lambda row: row[0],
             )
-            slot_center = platform.slot_centers[self.book_index - 1]
-            platform_near_x = _platform_near_x(platform)
+            cart_target_point = cart_target.center
+            if selected_platform is not None:
+                platform = selected_platform
+                slot_center = platform.slot_centers[self.book_index - 1]
+                platform_near_x = _platform_near_x(platform)
+            else:
+                slot_center = cart_target_point
+                platform_near_x = float(cart_target_point[0])
 
             if self.scan_only:
                 return CartVisualNavigationExecution(
@@ -303,36 +322,30 @@ class Stage1CartMapNavigator:
                     imu_dyaw_rad=float(pose.yaw),
                     selected_scan_yaw_rad=selected_scan_yaw,
                     slot_index=self.book_index,
+                    cart_target_origin_m=cart_target_point,
                     slot_center_origin_m=slot_center,
                     platform_near_x_origin_m=platform_near_x,
                     selected_scan_debug_image=selected_debug_image,
                 )
 
-            lateral_delta = float(slot_center[1]) - float(pose.y)
-            lateral_kind = (
-                self.runtime.WandaCommandKind.DRIVE_FORWARD
-                if lateral_delta >= 0.0
-                else self.runtime.WandaCommandKind.DRIVE_BACKWARD
-            )
-            for command in _distance_commands(
+            # At the 90-degree scan endpoint the robot faces the cart.  Express
+            # its RGB-D target in the current body frame, remove lateral error
+            # with a right-angle leg, then restore the cart-facing yaw.
+            target_in_body = _origin_point_to_body(cart_target_point, pose)
+            lateral_delta = float(target_in_body[1])
+            lateral_commands = _lateral_alignment_commands(
                 self.runtime,
-                lateral_kind,
-                abs(lateral_delta),
-            ):
+                lateral_delta,
+            )
+            for command in lateral_commands:
                 adapter.execute_command(command, precision_mode=True)
                 commands_sent += 1
 
-            return_turn = self.runtime.MappedMotionCommand(
-                self.runtime.WandaCommandKind.SPIN,
-                -math.pi / 2.0,
-                "Y",
-            )
-            adapter.execute_command(return_turn, precision_mode=True)
-            commands_sent += 1
-
             pose = adapter.current_task_pose()
-            target_robot_x = platform_near_x - CART_COARSE_FRONT_CLEARANCE_M
-            forward_delta = target_robot_x - float(pose.x)
+            target_in_body = _origin_point_to_body(cart_target_point, pose)
+            forward_delta = (
+                float(target_in_body[0]) - CART_COARSE_FRONT_CLEARANCE_M
+            )
             forward_kind = (
                 self.runtime.WandaCommandKind.DRIVE_FORWARD
                 if forward_delta >= 0.0
@@ -347,18 +360,46 @@ class Stage1CartMapNavigator:
                 commands_sent += 1
 
             adapter.correct_absolute_imu_yaw(
-                target_yaw_rad=starting_yaw,
+                target_yaw_rad=_normalize_yaw(starting_yaw + math.pi / 2.0),
                 tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
             )
+
+            # Rotation and long grid legs can accumulate tyre-slip error.  Once
+            # the robot faces the cart, take a new RGB-D observation and reuse
+            # the same vector X/Y correction used before book pickup.
+            fine_cart = self.vision.find_cart(require_body_target=True)
+            if fine_cart is None or fine_cart.body_target is None:
+                raise RuntimeError("正面朝向小推车后没有获得可用的微调深度点")
+            fine_observed = fine_cart.body_target.center
+            fine_reference = (
+                CART_COARSE_FRONT_CLEARANCE_M,
+                0.0,
+                float(fine_observed[2]),
+            )
+            fine_commands = _build_vector_commands(
+                self.runtime,
+                fine_reference,
+                fine_observed,
+            )
+            cart_facing_yaw = adapter.current_absolute_imu_yaw()
+            for command in fine_commands:
+                adapter.execute_command(command, precision_mode=True)
+                commands_sent += 1
+            if fine_commands:
+                adapter.correct_absolute_imu_yaw(
+                    target_yaw_rad=cart_facing_yaw,
+                    tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
+                )
             pose = adapter.current_task_pose()
             return CartVisualNavigationExecution(
                 command_count=commands_sent,
-                mode="cart-visual-manhattan",
+                mode="cart-visual-manhattan-fine",
                 odom_dx_m=float(pose.x),
                 odom_dy_m=float(pose.y),
                 imu_dyaw_rad=float(pose.yaw),
                 selected_scan_yaw_rad=selected_scan_yaw,
                 slot_index=self.book_index,
+                cart_target_origin_m=cart_target_point,
                 slot_center_origin_m=slot_center,
                 platform_near_x_origin_m=platform_near_x,
                 selected_scan_debug_image=selected_debug_image,
@@ -401,6 +442,45 @@ def transform_cart_platform_to_origin(platform, pose):
         slot_centers=tuple(point(value) for value in platform.slot_centers),
         confidence=float(platform.confidence),
     )
+
+
+def transform_cart_body_target_to_origin(target, pose):
+    """Express one capture-time cart-body point in the scan origin frame."""
+
+    x, y = _rotate_xy(target.center, pose.yaw)
+    return SimpleNamespace(
+        center=(
+            float(pose.x) + x,
+            float(pose.y) + y,
+            float(target.center[2]),
+        ),
+        confidence=float(target.confidence),
+    )
+
+
+def _origin_point_to_body(point, pose):
+    dx = float(point[0]) - float(pose.x)
+    dy = float(point[1]) - float(pose.y)
+    x, y = _rotate_xy((dx, dy), -float(pose.yaw))
+    return (x, y, float(point[2]))
+
+
+def _lateral_alignment_commands(runtime, lateral_m):
+    if abs(float(lateral_m)) <= 1e-9:
+        return ()
+    turn = math.copysign(math.pi / 2.0, float(lateral_m))
+    commands = [
+        runtime.MappedMotionCommand(runtime.WandaCommandKind.SPIN, turn, "Y")
+    ]
+    commands.extend(_distance_commands(
+        runtime,
+        runtime.WandaCommandKind.DRIVE_FORWARD,
+        abs(float(lateral_m)),
+    ))
+    commands.append(
+        runtime.MappedMotionCommand(runtime.WandaCommandKind.SPIN, -turn, "Y")
+    )
+    return tuple(commands)
 
 
 def _platform_near_x(platform):

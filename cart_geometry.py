@@ -26,6 +26,97 @@ class CartPlatformGeometry:
     confidence: float
 
 
+@dataclass(frozen=True)
+class CartBodyTarget:
+    """A robust RGB-D representative point used only for coarse base docking."""
+
+    center: tuple[float, float, float]
+    center_pixel: tuple[int, int]
+    confidence: float
+
+
+def reconstruct_cart_body_target(
+    *,
+    observation,
+    depth_m,
+    intrinsics,
+    camera_to_base: Callable[[tuple[float, float, float]], Sequence[float]],
+    minimum_depth_m=0.20,
+    maximum_depth_m=3.0,
+    minimum_depth_points=32,
+):
+    """Find a stable 3-D point near the center of a segmented cart body."""
+
+    if not isinstance(observation, SceneMask):
+        _fail("cart_mask_invalid")
+    if observation.semantic_class != "cart_body":
+        _fail("cart_body_mask_required")
+    if not isinstance(intrinsics, CameraIntrinsics):
+        _fail("camera_intrinsics_invalid")
+    if not callable(camera_to_base):
+        _fail("camera_transform_invalid")
+
+    depth = np.asarray(depth_m, dtype=float)
+    expected_shape = (observation.image_height, observation.image_width)
+    if depth.shape != expected_shape:
+        _fail("depth_shape_mismatch")
+    mask = decode_bbox_rle(
+        image_shape=expected_shape,
+        bbox=observation.bbox,
+        counts=observation.rle_counts,
+    )
+    x, y, width, height = observation.bbox
+    central = np.zeros(expected_shape, dtype=bool)
+    central[
+        y + int(height * 0.30):y + max(1, int(height * 0.70)),
+        x + int(width * 0.30):x + max(1, int(width * 0.70)),
+    ] = True
+    valid = (
+        mask
+        & central
+        & np.isfinite(depth)
+        & (depth >= float(minimum_depth_m))
+        & (depth <= float(maximum_depth_m))
+    )
+    rows, columns = np.nonzero(valid)
+    if rows.size < int(minimum_depth_points):
+        _fail("insufficient_cart_body_center_depth")
+
+    # Median depth rejects isolated pixels on the handle, shelf edges and holes.
+    median_depth = float(np.median(depth[rows, columns]))
+    deviations = np.abs(depth[rows, columns] - median_depth)
+    # Keep the entire central surface when many pixels have identical depth;
+    # selecting an arbitrary fixed count would bias the median toward one side.
+    cutoff = max(0.03, float(np.percentile(deviations, 50.0)))
+    keep = deviations <= cutoff
+    rows = rows[keep]
+    columns = columns[keep]
+    z = depth[rows, columns]
+    camera_points = np.column_stack((
+        (columns - intrinsics.cx) * z / intrinsics.fx,
+        (rows - intrinsics.cy) * z / intrinsics.fy,
+        z,
+    ))
+    try:
+        base_points = np.asarray(
+            [camera_to_base(tuple(point)) for point in camera_points],
+            dtype=float,
+        )
+    except Exception as error:
+        raise CartGeometryError("camera_transform_failed") from error
+    base_points = base_points[np.all(np.isfinite(base_points), axis=1)]
+    if base_points.shape[0] < int(minimum_depth_points):
+        _fail("insufficient_cart_body_center_depth")
+
+    center = np.median(base_points, axis=0)
+    center_pixel = (int(np.median(columns)), int(np.median(rows)))
+    return CartBodyTarget(
+        center=tuple(float(value) for value in center),
+        center_pixel=center_pixel,
+        confidence=float(observation.confidence),
+    )
+
+
 def select_leftmost_cart_platform(platforms):
     """Choose the cart-side plane when a table is also labelled as a platform."""
 

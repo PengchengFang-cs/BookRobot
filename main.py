@@ -156,6 +156,10 @@ def run_real(args):
                         row.semantic_class for row in cart.observations
                     ],
                     "frame_id": None if cart is None else cart.frame_id,
+                    "cart_target_m": (
+                        None if cart is None or cart.body_target is None
+                        else cart.body_target.center
+                    ),
                     "platform_center_m": (
                         None if platform is None else platform.center
                     ),
@@ -187,6 +191,7 @@ def run_real(args):
                         navigation.selected_scan_yaw_rad * 180.0 / 3.141592653589793
                     ),
                     "slot_index": navigation.slot_index,
+                    "cart_target_origin_m": navigation.cart_target_origin_m,
                     "slot_center_origin_m": navigation.slot_center_origin_m,
                     "platform_near_x_origin_m": navigation.platform_near_x_origin_m,
                     "debug_image": navigation.selected_scan_debug_image,

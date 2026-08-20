@@ -17,6 +17,7 @@ from book_geometry import CameraIntrinsics, decode_bbox_rle
 from book_rpc import BookVisionClient
 from cart_geometry import (
     CartGeometryError,
+    reconstruct_cart_body_target,
     reconstruct_cart_platform,
     select_leftmost_cart_platform,
 )
@@ -49,6 +50,7 @@ class LocatedBook:
 @dataclass(frozen=True)
 class LocatedCart:
     observations: tuple[object, ...]
+    body_target: object
     platform: object
     frame_id: str
     captured_at_ns: int
@@ -282,11 +284,10 @@ class Vision:
         if not observations:
             return None
         platform_candidates = []
+        body_candidates = []
         for observation in observations:
-            if observation.semantic_class != "cart_platform":
-                continue
             try:
-                platform_candidates.append(reconstruct_cart_platform(
+                geometry_args = dict(
                     observation=observation,
                     depth_m=depth,
                     intrinsics=CameraIntrinsics(
@@ -298,18 +299,33 @@ class Vision:
                     camera_to_base=lambda point: camera_point_to_base(
                         point, body, head_yaw, head_pitch
                     ),
-                ))
+                )
+                if observation.semantic_class == "cart_body":
+                    body_candidates.append(reconstruct_cart_body_target(
+                        **geometry_args
+                    ))
+                elif observation.semantic_class == "cart_platform":
+                    platform_candidates.append(reconstruct_cart_platform(
+                        **geometry_args
+                    ))
             except CartGeometryError as error:
-                print(f"[视觉] 小推车顶面几何不可用: {error}")
+                print(f"[视觉] 小推车几何不可用: {error}")
+        body_target = (
+            max(body_candidates, key=lambda candidate: candidate.confidence)
+            if body_candidates
+            else None
+        )
         platform = select_leftmost_cart_platform(platform_candidates)
         debug_path = self._save_cart_debug_overlay(
             color,
             observations,
+            body_target,
             platform,
             debug_path=debug_path,
         )
         return LocatedCart(
             observations=tuple(observations),
+            body_target=body_target,
             platform=platform,
             frame_id="base_link",
             captured_at_ns=captured_at_ns,
@@ -320,6 +336,7 @@ class Vision:
         self,
         color,
         observations,
+        body_target,
         platform,
         *,
         debug_path=None,
@@ -349,6 +366,17 @@ class Vision:
                 2,
             )
         color[:] = cv2.addWeighted(color, 0.65, overlay, 0.35, 0.0)
+        if body_target is not None:
+            cv2.circle(color, body_target.center_pixel, 12, (0, 0, 255), -1)
+            cv2.putText(
+                color,
+                "cart navigation target",
+                (body_target.center_pixel[0] + 14, body_target.center_pixel[1] - 12),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65,
+                (0, 0, 255),
+                2,
+            )
         if platform is not None:
             for index, pixel in enumerate(platform.slot_pixels, 1):
                 cv2.circle(color, pixel, 9, (0, 0, 255), -1)
@@ -434,7 +462,7 @@ class Vision:
 
         return tuple(detect(frame) for frame in frames)
 
-    def find_cart(self):
+    def find_cart(self, *, require_body_target=False):
         """Return one cart-loading observation without any robot motion."""
 
         started = time.monotonic()
@@ -456,9 +484,12 @@ class Vision:
             self.last_capture_ns = snapshot.captured_at_ns
             try:
                 result = self._detect_cart_once(snapshot, joints)
-                if result is not None:
+                if (
+                    result is not None
+                    and (not require_body_target or result.body_target is not None)
+                ):
                     return result
-                print("[视觉] 当前帧没有检测到小推车")
+                print("[视觉] 当前帧没有检测到可用的小推车整体深度点")
             except Exception as error:
                 self.node.get_logger().warning(f"小推车检测帧不能用: {error}")
                 print(f"[视觉] 小推车检测帧不能用: {type(error).__name__}: {error}")
