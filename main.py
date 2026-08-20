@@ -8,7 +8,9 @@ from geometry import fruit_from_text
 from mission import (
     run_book_alignment_from_current_once,
     run_book_alignment_once,
+    run_book_pick_place_once,
     run_book_pick_once,
+    run_book_place_once,
     run_one_fruit,
 )
 
@@ -55,6 +57,16 @@ def arguments():
         action="store_true",
         help="检测、对位并执行一次 Stage-1 DataReplay 吸书",
     )
+    operation.add_argument(
+        "--book-place",
+        action="store_true",
+        help="从还书桌前地图位置导航到小推车并执行一次 Place 2.4",
+    )
+    operation.add_argument(
+        "--book-pick-place",
+        action="store_true",
+        help="串联执行一次书本 Pick、地图导航和小推车 Place",
+    )
     parser.add_argument(
         "--book-align-mode",
         choices=("legacy", "vector"),
@@ -87,8 +99,13 @@ def run_real(args):
     arm = None
 
     try:
-        if args.book_align or args.book_pick:
-            from book_navigation import BookAlignmentNavigator
+        if (
+            args.book_align
+            or args.book_pick
+            or args.book_place
+            or args.book_pick_place
+        ):
+            from book_navigation import BookAlignmentNavigator, Stage1CartMapNavigator
             from config import REPLAY_PICK_REFERENCE_PATH
             from replay_pick_reference import load_replay_pick_reference
             from tf2_ros import Buffer, TransformListener
@@ -97,31 +114,59 @@ def run_real(args):
             tf_listener = TransformListener(tf_buffer, node)
             vision = Vision(node, tf_buffer)
 
-            navigator = BookAlignmentNavigator(mode=args.book_align_mode)
-            replay_reference = load_replay_pick_reference(
-                REPLAY_PICK_REFERENCE_PATH
-            )
             say = lambda text: print(f"[机器人] {text}")
-            if args.book_pick:
+            feedback = dict(
+                joint_positions=lambda: dict(vision.joints),
+                spin_feedback=lambda: vision.spin_until_fresh_body(
+                    lambda timeout_s: rclpy.spin_once(
+                        node, timeout_sec=timeout_s
+                    ),
+                    timeout_s=0.5,
+                ),
+            )
+            if args.book_place:
+                from book_place_replay import Stage1BookPlaceReplayer
+
+                run_book_place_once(
+                    Stage1CartMapNavigator(),
+                    Stage1BookPlaceReplayer(**feedback),
+                    say,
+                )
+            elif args.book_pick or args.book_pick_place:
                 from book_pick_replay import Stage1BookPickReplayer
 
-                run_book_pick_once(
-                    vision,
-                    navigator,
-                    Stage1BookPickReplayer(
-                        joint_positions=lambda: dict(vision.joints),
-                        spin_feedback=lambda: vision.spin_until_fresh_body(
-                            lambda timeout_s: rclpy.spin_once(
-                                node, timeout_sec=timeout_s
-                            ),
-                            timeout_s=0.5,
-                        ),
-                    ),
-                    replay_reference,
-                    say,
-                    coarse=args.book_coarse,
+                navigator = BookAlignmentNavigator(mode=args.book_align_mode)
+                replay_reference = load_replay_pick_reference(
+                    REPLAY_PICK_REFERENCE_PATH
                 )
+                pick_replayer = Stage1BookPickReplayer(**feedback)
+                if args.book_pick_place:
+                    from book_place_replay import Stage1BookPlaceReplayer
+
+                    run_book_pick_place_once(
+                        vision,
+                        navigator,
+                        pick_replayer,
+                        replay_reference,
+                        Stage1CartMapNavigator(),
+                        Stage1BookPlaceReplayer(**feedback),
+                        say,
+                        coarse=args.book_coarse,
+                    )
+                else:
+                    run_book_pick_once(
+                        vision,
+                        navigator,
+                        pick_replayer,
+                        replay_reference,
+                        say,
+                        coarse=args.book_coarse,
+                    )
             else:
+                navigator = BookAlignmentNavigator(mode=args.book_align_mode)
+                replay_reference = load_replay_pick_reference(
+                    REPLAY_PICK_REFERENCE_PATH
+                )
                 align = (
                     run_book_alignment_once
                     if args.book_coarse
@@ -133,7 +178,8 @@ def run_real(args):
                     replay_reference,
                     say,
                 )
-            print(f"[视觉] 调试图: {vision.debug_path}")
+            if not args.book_place:
+                print(f"[视觉] 调试图: {vision.debug_path}")
             return
 
         from navigation import Navigation

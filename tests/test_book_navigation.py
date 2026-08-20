@@ -4,7 +4,12 @@ from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from book_navigation import BookAlignmentNavigator, load_navnav_runtime
+from book_navigation import (
+    BookAlignmentNavigator,
+    Stage1CartMapNavigator,
+    cart_transition_body_delta,
+    load_navnav_runtime,
+)
 
 
 class _Adapter:
@@ -263,6 +268,26 @@ class BookNavigationTests(unittest.TestCase):
         self.assertEqual(call.observed[2], call.reference[2])
         self.assertEqual(call.torso, 0.28)
         self.assertEqual(result.command_count, 0)
+
+    def test_cart_transition_uses_reviewed_map_delta_in_table_body_axes(self):
+        dx_m, dy_m = cart_transition_body_delta()
+
+        self.assertAlmostEqual(dx_m, 0.52493, places=4)
+        self.assertAlmostEqual(dy_m, 0.89052, places=4)
+        self.assertAlmostEqual(math.hypot(dx_m, dy_m), 1.03372, places=4)
+
+    def test_cart_map_navigator_sends_one_relative_table_to_cart_move(self):
+        calls = []
+        expected = SimpleNamespace(command_count=3)
+        inner = SimpleNamespace(
+            align=lambda **kwargs: calls.append(kwargs) or expected
+        )
+
+        result = Stage1CartMapNavigator(inner).navigate()
+
+        self.assertIs(result, expected)
+        self.assertEqual(calls[0]["reference"], (0.0, 0.0, 0.0))
+        self.assertEqual(calls[0]["observed"], (*cart_transition_body_delta(), 0.0))
 
 
 if __name__ == "__main__":

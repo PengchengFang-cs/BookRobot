@@ -18,7 +18,10 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI=file:///home/unix_ai/config/cyclonedds.xml
 export PYTHONUNBUFFERED=1
 
-if [[ " $* " == *" --book-align "* || " $* " == *" --book-pick "* ]]; then
+if [[ " $* " == *" --book-align "* || \
+      " $* " == *" --book-pick "* || \
+      " $* " == *" --book-place "* || \
+      " $* " == *" --book-pick-place "* ]]; then
   source "$DIR/scripts/book_vision_env.sh"
   exec python3 "$DIR/main.py" "$@"
 fi

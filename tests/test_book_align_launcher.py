@@ -27,13 +27,15 @@ class BookAlignLauncherTests(unittest.TestCase):
         branch_end = run_text.index("\nfi", branch)
         text = run_text[branch:branch_end]
         self.assertIn('" --book-pick "', text)
+        self.assertIn('" --book-place "', text)
+        self.assertIn('" --book-pick-place "', text)
         self.assertIn('source "$DIR/scripts/book_vision_env.sh"', text)
         self.assertNotIn("release_base.sh", text)
         self.assertLess(branch, run_text.index("install_moveit_user.sh"))
 
     def test_book_alignment_does_not_wait_for_a_new_release_button_edge(self):
         main_text = (ROOT / "main.py").read_text(encoding="utf-8")
-        branch_start = main_text.index("if args.book_align or args.book_pick:")
+        branch_start = main_text.index("args.book_align\n            or args.book_pick")
         branch_end = main_text.index("\n            return", branch_start)
         branch = main_text[branch_start:branch_end]
 

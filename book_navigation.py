@@ -12,6 +12,8 @@ NAVNAV_ROOT = Path("/home/unix_ai/navnav_final")
 NAVNAV_MODULE = "runtime.wanda_nav_whrc"
 VECTOR_FINAL_YAW_TOLERANCE_RAD = math.radians(0.15)
 VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M = 0.010
+RETURN_TABLE_MAP_POSE = (2.857213, -2.520253, math.radians(-1.920977))
+CART_FRONT_MAP_POSE = (3.411691, -1.647823, math.radians(-1.558860))
 
 
 @dataclass(frozen=True)
@@ -136,3 +138,32 @@ class BookAlignmentNavigator:
             )
         finally:
             adapter.stop()
+
+
+def cart_transition_body_delta(
+    table_pose=RETURN_TABLE_MAP_POSE,
+    cart_pose=CART_FRONT_MAP_POSE,
+):
+    """Express the reviewed table-to-cart map displacement in table body axes."""
+
+    world_dx = float(cart_pose[0]) - float(table_pose[0])
+    world_dy = float(cart_pose[1]) - float(table_pose[1])
+    yaw = float(table_pose[2])
+    return (
+        math.cos(yaw) * world_dx + math.sin(yaw) * world_dy,
+        -math.sin(yaw) * world_dx + math.cos(yaw) * world_dy,
+    )
+
+
+class Stage1CartMapNavigator:
+    """Move from the reviewed return-table point to the reviewed cart point."""
+
+    def __init__(self, navigator=None):
+        self.navigator = navigator or BookAlignmentNavigator(mode="vector")
+
+    def navigate(self):
+        dx_m, dy_m = cart_transition_body_delta()
+        return self.navigator.align(
+            reference=(0.0, 0.0, 0.0),
+            observed=(dx_m, dy_m, 0.0),
+        )

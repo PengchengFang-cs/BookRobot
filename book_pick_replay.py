@@ -135,7 +135,7 @@ class BookPickReplayResult:
     z_offset_m: float
     torso_target_m: float
     torso_actual_m: float
-    d01_holding: bool
+    d01_holding: object
 
 
 @dataclass(frozen=True)
@@ -197,6 +197,12 @@ class LegacyV3PickRuntime:
         wait_function=time.sleep,
         joint_positions=None,
         spin_feedback=None,
+        asset_id=PICK_ASSET_ID,
+        asset_path=PICK_ASSET_PATH,
+        frame_count=PICK_FRAME_COUNT,
+        d01_events=None,
+        asset_version="stage1-dr1.2-20260819",
+        operation_label="Stage-1 Pick",
     ):
         self.replay_adapter = replay_adapter
         self.context = context
@@ -207,15 +213,19 @@ class LegacyV3PickRuntime:
         self.wait_function = wait_function
         self.joint_positions = joint_positions
         self.spin_feedback = spin_feedback or (lambda: True)
-        self.entry = dict(replay_adapter.assets[PICK_ASSET_ID])
-        self.entry["file"] = str(PICK_ASSET_PATH)
-        self.entry["version"] = "stage1-dr1.2-20260819"
-        self.entry["d01_events"] = [
+        self.asset_id = str(asset_id)
+        self.asset_path = Path(asset_path)
+        self.frame_count = int(frame_count)
+        self.operation_label = str(operation_label)
+        self.entry = dict(replay_adapter.assets[self.asset_id])
+        self.entry["file"] = str(self.asset_path)
+        self.entry["version"] = str(asset_version)
+        self.entry["d01_events"] = list(d01_events or [
             {
                 "frame_index": PICK_D01_FRAME_INDEX,
                 "command": "right_suction_start",
             }
-        ]
+        ])
         self.entry["allow_base_motion"] = True
         required = list(self.entry.get("required_action_channels", ()))
         for channel in EXACT_ACTION_SHAPES:
@@ -236,20 +246,22 @@ class LegacyV3PickRuntime:
         module._stop_service = _stop_service_without_sudo
         module._start_service_and_wait = _start_service_without_sudo
         episode = module.HDF5EpisodeLoader.load(str(self.entry["file"]))
-        if int(getattr(episode, "num_frames", -1)) != PICK_FRAME_COUNT:
+        if int(getattr(episode, "num_frames", -1)) != self.frame_count:
             raise RuntimeError(
-                f"Stage-1 Pick asset must contain exactly {PICK_FRAME_COUNT} frames"
+                f"{self.operation_label} asset must contain exactly "
+                f"{self.frame_count} frames"
             )
         validation = module.DataValidator.validate(episode)
         if getattr(validation, "valid", False) is not True:
             if self.entry.get("contract_validation_only") is not True:
-                raise RuntimeError("Stage-1 Pick HDF5 validation failed")
+                raise RuntimeError(f"{self.operation_label} HDF5 validation failed")
             errors = self.replay_adapter._contract_validation_errors(
                 module, episode, self.entry
             )
             if errors:
                 raise RuntimeError(
-                    "Stage-1 Pick contract validation failed: " + "; ".join(errors)
+                    f"{self.operation_label} contract validation failed: "
+                    + "; ".join(errors)
                 )
         contract_error = self.replay_adapter._episode_contract_error(
             episode, self.entry
@@ -259,7 +271,7 @@ class LegacyV3PickRuntime:
         actions = getattr(episode, "actions", {})
         for channel, trailing_shape in EXACT_ACTION_SHAPES.items():
             value = actions.get(channel)
-            expected = (PICK_FRAME_COUNT, *trailing_shape)
+            expected = (self.frame_count, *trailing_shape)
             if value is None or np.asarray(value).shape != expected:
                 actual = None if value is None else np.asarray(value).shape
                 raise RuntimeError(
@@ -455,7 +467,7 @@ class LegacyV3PickRuntime:
                 self.module,
                 episode,
                 self.entry,
-                PICK_ASSET_ID,
+                self.asset_id,
                 self.context,
                 deadline,
                 before,
@@ -498,11 +510,14 @@ class LegacyV3PickRuntime:
         def run_event(index, event, started):
             started.set()
             try:
-                if (
-                    event["command"] == "right_suction_start"
-                    and hasattr(adapter.delegate, "d01_host")
+                if hasattr(adapter.delegate, "d01_host") and event["command"] in (
+                    "right_suction_start",
+                    "right_suction_stop",
                 ):
-                    self._start_d01_without_waiting()
+                    if event["command"] == "right_suction_start":
+                        self._start_d01_without_waiting()
+                    else:
+                        self._stop_d01_without_release()
                     state = "success"
                     with event_lock:
                         event_states[index] = state
@@ -565,6 +580,8 @@ class LegacyV3PickRuntime:
                     continue
                 if event["command"] == "right_suction_start":
                     self._d01_state = "holding_or_unknown"
+                elif event["command"] == "right_suction_stop":
+                    self._d01_state = "released_or_unknown"
                 scheduled.add(index)
                 started = threading.Event()
                 worker = threading.Thread(
@@ -627,11 +644,38 @@ class LegacyV3PickRuntime:
         if response.get("ok") is not True or response.get("action") != "start":
             raise RuntimeError("D01 start command was not acknowledged")
 
+    def _stop_d01_without_release(self):
+        """Stop suction without the release-vacuum puff and wait only for ack."""
+
+        delegate = self.replay_adapter.delegate
+        callback = delegate.execute_d01_event
+        function = getattr(callback, "__func__", callback)
+        client_type = getattr(function, "__globals__", {}).get("SuctionClient")
+        if client_type is None:
+            raise RuntimeError("D01 command client is unavailable")
+        with client_type(
+            delegate.d01_host,
+            delegate.d01_port,
+            timeout_s=5.0,
+        ) as client:
+            response = client.command(
+                "stop",
+                side=delegate.d01_side,
+                release_vacuum=False,
+                disable=True,
+            )
+        if response.get("ok") is not True or response.get("action") != "stop":
+            raise RuntimeError("D01 stop command was not acknowledged")
+
     def replay_pick(self, episode):
         if self.entry.get("allow_base_motion") is not True:
-            raise RuntimeError("Stage-1 Pick must replay its recorded base motion")
+            raise RuntimeError(
+                f"{self.operation_label} must replay its recorded base motion"
+            )
         if self.module is None:
-            raise RuntimeError("Stage-1 Pick episode must be loaded before replay")
+            raise RuntimeError(
+                f"{self.operation_label} episode must be loaded before replay"
+            )
         before = int(self.replay_adapter.frames_sent)
         deadline = self.monotonic_clock() + float(self.entry["timeout_seconds"])
         delegate = self.replay_adapter.delegate
@@ -674,7 +718,7 @@ class LegacyV3PickRuntime:
                 self.module,
                 episode,
                 self.entry,
-                PICK_ASSET_ID,
+                self.asset_id,
                 self.context,
                 deadline,
                 before,
@@ -687,16 +731,16 @@ class LegacyV3PickRuntime:
                 delegate.track_replay_completion = original_tracker
         if not _success(result):
             raise RuntimeError(
-                "Stage-1 Pick DataReplay failed: "
+                f"{self.operation_label} DataReplay failed: "
                 + str(getattr(result, "detail", "unknown error"))
             )
         frames = int(getattr(result, "data", {}).get(
             "frames_sent", self.replay_adapter.frames_sent - before
         ))
         actual_frames = int(self.replay_adapter.frames_sent) - before
-        if frames != PICK_FRAME_COUNT or actual_frames != PICK_FRAME_COUNT:
+        if frames != self.frame_count or actual_frames != self.frame_count:
             raise RuntimeError(
-                f"Stage-1 Pick must publish all {PICK_FRAME_COUNT} frames; "
+                f"{self.operation_label} must publish all {self.frame_count} frames; "
                 f"reported={frames}, actual={actual_frames}"
             )
         return ReplayPublishEvidence(frames_sent=frames)
@@ -784,7 +828,7 @@ class Stage1BookPickReplayer:
         episode = self.runtime.load_episode()
         self.runtime.prepare_frame_zero(episode)
 
-    def pick(self, z_offset_m):
+    def pick(self, z_offset_m, *, check_holding=False):
         offset = _finite_offset(z_offset_m)
         if self.runtime is None:
             self.runtime = load_legacy_v3_pick_runtime(
@@ -799,8 +843,12 @@ class Stage1BookPickReplayer:
             replay_started = True
             replay = self.runtime.replay_pick(shifted)
             torso_actual = float(self.runtime.frame_zero_torso_actual_m)
-            holding = bool(self.runtime.confirm_holding())
-            if not holding:
+            holding = (
+                bool(self.runtime.confirm_holding())
+                if check_holding
+                else None
+            )
+            if check_holding and not holding:
                 raise RuntimeError("DataReplay 已完成，但右吸盘没有吸住书本")
             return BookPickReplayResult(
                 frames_sent=int(replay.frames_sent),

@@ -198,28 +198,28 @@ class Stage1BookPickReplayerTests(unittest.TestCase):
         self.assertEqual(runtime.calls, ["load", "prepare"])
         self.assertIs(runtime.prepared_episode, runtime.source)
 
-    def test_prepositions_shifted_frame_zero_replays_once_and_confirms_holding(self):
+    def test_prepositions_shifted_frame_zero_replays_once_without_default_check(self):
         runtime = _Runtime()
 
         result = Stage1BookPickReplayer(runtime=runtime).pick(0.012)
 
         self.assertEqual(runtime.calls[0], "load")
-        self.assertEqual(runtime.calls[1:], ["replay", "holding", "close"])
+        self.assertEqual(runtime.calls[1:], ["replay", "close"])
         self.assertEqual(result.frames_sent, 3)
         self.assertAlmostEqual(result.z_offset_m, 0.012)
         self.assertAlmostEqual(result.torso_target_m, 0.212)
         self.assertAlmostEqual(result.torso_actual_m, 0.211)
-        self.assertTrue(result.d01_holding)
+        self.assertIsNone(result.d01_holding)
         np.testing.assert_allclose(
             runtime.replayed_episode.actions["target_qpos_torso"].reshape(-1),
             [0.212, 0.222, 0.232],
         )
 
-    def test_rejects_missing_attachment_after_replay(self):
+    def test_optional_holding_check_rejects_missing_attachment_after_replay(self):
         runtime = _Runtime(holding=False)
 
         with self.assertRaisesRegex(RuntimeError, "没有吸住"):
-            Stage1BookPickReplayer(runtime=runtime).pick(0.0)
+            Stage1BookPickReplayer(runtime=runtime).pick(0.0, check_holding=True)
 
         self.assertTrue(runtime.cleaned_up)
         self.assertEqual(runtime.calls[-2:], ["cleanup", "close"])

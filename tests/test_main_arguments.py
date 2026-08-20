@@ -34,6 +34,13 @@ class MainArgumentTests(unittest.TestCase):
         self.assertTrue(args.book_pick)
         self.assertEqual(args.book_align_mode, "vector")
 
+    def test_accepts_combined_pick_place(self):
+        with patch.object(sys, "argv", ["main.py", "--book-pick-place"]):
+            args = arguments()
+
+        self.assertTrue(args.book_pick_place)
+        self.assertFalse(args.book_coarse)
+
     def test_book_pick_defaults_to_no_coarse_positioning(self):
         with patch.object(sys, "argv", ["main.py", "--book-pick"]):
             args = arguments()
@@ -72,22 +79,20 @@ class MainArgumentTests(unittest.TestCase):
         text = (Path(__file__).resolve().parents[1] / "main.py").read_text(
             encoding="utf-8"
         )
-        branch = text.index("if args.book_align or args.book_pick:")
+        branch = text.index("args.book_align\n            or args.book_pick")
         legacy = text.index("from navigation import Navigation", branch)
         self.assertLess(branch, legacy)
         self.assertIn("BookAlignmentNavigator(mode=args.book_align_mode)", text)
         self.assertIn(
-            "Stage1BookPickReplayer(\n"
-            "                        joint_positions=lambda: dict(vision.joints),",
+            "pick_replayer = Stage1BookPickReplayer(**feedback)",
             text,
         )
         self.assertIn(
             "spin_feedback=lambda: vision.spin_until_fresh_body(\n"
-            "                            lambda timeout_s: rclpy.spin_once(\n"
-            "                                node, timeout_sec=timeout_s\n"
-            "                            ),\n"
-            "                            timeout_s=0.5,\n"
-            "                        )",
+            "                    lambda timeout_s: rclpy.spin_once(\n"
+            "                        node, timeout_sec=timeout_s\n"
+            "                    ),\n"
+            "                    timeout_s=0.5,",
             text,
         )
         self.assertIn("timeout_s=0.5", text)
@@ -116,7 +121,7 @@ class MainArgumentTests(unittest.TestCase):
         text = (Path(__file__).resolve().parents[1] / "main.py").read_text(
             encoding="utf-8"
         )
-        branch = text[text.index("if args.book_align or args.book_pick:") :]
+        branch = text[text.index("args.book_align\n            or args.book_pick") :]
         self.assertIn("load_replay_pick_reference", branch)
         self.assertIn("REPLAY_PICK_REFERENCE_PATH", branch)
         self.assertIn("replay_reference", branch)
