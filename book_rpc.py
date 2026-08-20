@@ -194,7 +194,6 @@ class BookVisionClient:
         base_motion_epoch,
         head_motion_epoch,
         task=SCENE_TASK,
-        timeout_s=None,
     ):
         image = np.asarray(image_bgr)
         if image.dtype != np.uint8 or image.ndim != 3 or image.shape[2] != 3:
@@ -209,16 +208,7 @@ class BookVisionClient:
             self._sequence += 1
             sequence = self._sequence
         now_ns = self._clock_ns()
-        request_timeout_s = (
-            self.settings.timeout_s if timeout_s is None else float(timeout_s)
-        )
-        if (
-            not np.isfinite(request_timeout_s)
-            or request_timeout_s <= 0.0
-            or request_timeout_s > 30.0
-        ):
-            raise BookVisionError("book_vision_request_timeout_invalid")
-        lifetime_ns = int(request_timeout_s * 1_000_000_000)
+        lifetime_ns = int(self.settings.timeout_s * 1_000_000_000)
         deadline_ns = captured_at_ns + lifetime_ns
         if now_ns >= deadline_ns:
             raise BookVisionError("book_vision_capture_expired")
@@ -298,7 +288,6 @@ class BookVisionClient:
         captured_at_ns,
         base_motion_epoch,
         head_motion_epoch,
-        timeout_s=None,
     ):
         return self.detect_scene(
             image_bgr,
@@ -308,7 +297,6 @@ class BookVisionClient:
             task=CART_SCENE_TASK,
             profile=CART_SCENE_PROFILE,
             semantic_classes=CART_SCENE_CLASSES,
-            timeout_s=timeout_s,
         )
 
     def detect_scene(
@@ -321,7 +309,6 @@ class BookVisionClient:
         task,
         profile,
         semantic_classes,
-        timeout_s=None,
     ):
         request = self._make_request(
             image_bgr,
@@ -329,13 +316,15 @@ class BookVisionClient:
             base_motion_epoch=base_motion_epoch,
             head_motion_epoch=head_motion_epoch,
             task=task,
-            timeout_s=timeout_s,
         )
         remaining_s = (request.header.deadline_ns - self._clock_ns()) / 1_000_000_000
         if remaining_s <= 0:
             raise BookVisionError("book_vision_capture_expired")
         try:
-            response = self._rpc(request, timeout=remaining_s)
+            response = self._rpc(
+                request,
+                timeout=min(self.settings.timeout_s, remaining_s),
+            )
         except Exception as error:
             raise BookVisionError("book_vision_rpc_failed") from error
         if getattr(response, "task", None) != task:

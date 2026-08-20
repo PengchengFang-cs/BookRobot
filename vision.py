@@ -1,6 +1,5 @@
 """视觉积木：5090 分割书本，机器人本地用深度计算吸取点。"""
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import time
 from pathlib import Path
@@ -260,7 +259,6 @@ class Vision:
         joints,
         *,
         rpc_captured_at_ns=None,
-        rpc_timeout_s=None,
         debug_path=None,
     ):
         color, depth = self._snapshot_arrays(snapshot)
@@ -280,7 +278,6 @@ class Vision:
             captured_at_ns=rpc_captured_at_ns,
             base_motion_epoch=f"fruittest-base-capture-{captured_at_ns}",
             head_motion_epoch=f"fruittest-head-capture-{captured_at_ns}",
-            timeout_s=rpc_timeout_s,
         )
         if not observations:
             return None
@@ -400,8 +397,8 @@ class Vision:
             )
         return None
 
-    def detect_cart_frames_parallel(self, frames):
-        """Submit all captured scan frames together after rotation has stopped."""
+    def detect_cart_frames_queued(self, frames):
+        """Process the captured scan frames in order after rotation has stopped."""
 
         frames = tuple(frame for frame in frames if frame is not None)
         if not frames:
@@ -418,7 +415,6 @@ class Vision:
                         frame.snapshot,
                         frame.joints,
                         rpc_captured_at_ns=time.time_ns(),
-                        rpc_timeout_s=15.0,
                         debug_path=debug_path,
                     )
                 except Exception as error:
@@ -436,15 +432,7 @@ class Vision:
             )
             return None
 
-        results = [None] * len(frames)
-        with ThreadPoolExecutor(max_workers=len(frames)) as executor:
-            futures = {
-                executor.submit(detect, frame): index
-                for index, frame in enumerate(frames)
-            }
-            for future in as_completed(futures):
-                results[futures[future]] = future.result()
-        return tuple(results)
+        return tuple(detect(frame) for frame in frames)
 
     def find_cart(self):
         """Return one cart-loading observation without any robot motion."""

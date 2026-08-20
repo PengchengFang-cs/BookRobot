@@ -118,14 +118,14 @@ class BookNavigationTests(unittest.TestCase):
             events.append(("capture", scan_angle_deg))
             return SimpleNamespace(scan_angle_deg=scan_angle_deg)
 
-        def detect_cart_frames_parallel(frames):
+        def detect_cart_frames_queued(frames):
             frames = tuple(frames)
-            events.append(("detect_batch", len(frames)))
+            events.append(("detect_queue", len(frames)))
             return tuple(carts)
 
         return SimpleNamespace(
             capture_cart_frame=capture_cart_frame,
-            detect_cart_frames_parallel=detect_cart_frames_parallel,
+            detect_cart_frames_queued=detect_cart_frames_queued,
         )
 
     @staticmethod
@@ -457,7 +457,7 @@ class BookNavigationTests(unittest.TestCase):
         self.assertEqual(
             events,
             [("capture", angle) for angle in (15, 30, 45, 60, 75, 90)]
-            + [("detect_batch", 6)],
+            + [("detect_queue", 6)],
         )
         self.assertEqual(runtime.adapter.yaw_corrections, [])
         self.assertTrue(runtime.adapter.stopped)

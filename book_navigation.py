@@ -265,7 +265,7 @@ class Stage1CartMapNavigator:
                 if capture is not None:
                     captures.append((pose, capture))
 
-            carts = self.vision.detect_cart_frames_parallel(
+            carts = self.vision.detect_cart_frames_queued(
                 capture for _pose, capture in captures
             )
             for (capture_pose, _capture), cart in zip(captures, carts):
