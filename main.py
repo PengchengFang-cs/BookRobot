@@ -113,7 +113,8 @@ def run_real(args):
                         spin_feedback=lambda: vision.spin_until_fresh_body(
                             lambda timeout_s: rclpy.spin_once(
                                 node, timeout_sec=timeout_s
-                            )
+                            ),
+                            timeout_s=0.5,
                         ),
                     ),
                     replay_reference,

@@ -1,5 +1,6 @@
 import unittest
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -714,6 +715,12 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
         worker.start()
         self.assertTrue(started.wait(timeout=0.5))
         try:
+            deadline = time.monotonic() + 0.5
+            while (
+                ("publish", 1) not in events
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.001)
             self.assertIn(("publish", 1), events)
             self.assertNotIn(("d01_done", "right_suction_start"), events)
         finally:

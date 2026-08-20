@@ -85,10 +85,12 @@ class MainArgumentTests(unittest.TestCase):
             "spin_feedback=lambda: vision.spin_until_fresh_body(\n"
             "                            lambda timeout_s: rclpy.spin_once(\n"
             "                                node, timeout_sec=timeout_s\n"
-            "                            )\n"
+            "                            ),\n"
+            "                            timeout_s=0.5,\n"
             "                        )",
             text,
         )
+        self.assertIn("timeout_s=0.5", text)
         vision_text = (
             Path(__file__).resolve().parents[1] / "vision.py"
         ).read_text(encoding="utf-8")
