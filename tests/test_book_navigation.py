@@ -477,7 +477,7 @@ class BookNavigationTests(unittest.TestCase):
             for index in range(1, CART_SCAN_STEPS + 1)
         )
         lateral_pose = (-0.2, 0.5, 0.0)
-        final_pose = (1.0, 0.5, 0.0)
+        final_pose = (0.0, 0.5, 0.0)
         runtime = _Runtime(
             [],
             absolute_yaw=0.12,
@@ -524,10 +524,10 @@ class BookNavigationTests(unittest.TestCase):
         self.assertAlmostEqual(sum(row.value for row in commands[7:10]), 0.5)
         self.assertEqual(commands[10].kind, "spin")
         self.assertAlmostEqual(commands[10].value, -math.pi / 2.0)
-        self.assertEqual([row.kind for row in commands[11:17]], ["forward"] * 6)
-        self.assertAlmostEqual(sum(row.value for row in commands[11:17]), 1.2)
-        self.assertEqual(commands[17].kind, "forward")
-        self.assertAlmostEqual(commands[17].value, 0.09)
+        self.assertEqual(commands[11].kind, "forward")
+        self.assertAlmostEqual(commands[11].value, 0.2)
+        self.assertEqual(commands[12].kind, "forward")
+        self.assertAlmostEqual(commands[12].value, 0.09)
         self.assertAlmostEqual(
             runtime.adapter.yaw_corrections[0]["target_yaw_rad"],
             0.12,

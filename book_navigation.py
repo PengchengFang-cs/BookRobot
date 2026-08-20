@@ -360,25 +360,21 @@ class Stage1CartMapNavigator:
             adapter.execute_command(return_turn, precision_mode=True)
             commands_sent += 1
 
-            pose = adapter.current_task_pose()
-            target_robot_x = (
-                float(cart_target_point[0]) - CART_COARSE_FRONT_CLEARANCE_M
-            )
-            forward_delta = target_robot_x - float(pose.x)
-            forward_kind = (
-                self.runtime.WandaCommandKind.DRIVE_FORWARD
-                if forward_delta >= 0.0
-                else self.runtime.WandaCommandKind.DRIVE_BACKWARD
-            )
+            # The route started by backing exactly 20 cm away from the Pick
+            # replay endpoint.  After completing the Y leg and restoring yaw,
+            # move forward by the same 20 cm instead of estimating coarse X
+            # from cart depth.  The fresh front-facing observation below owns
+            # the remaining X/Y correction and the 0.8 m target distance.
+            forward_delta = CART_TURN_CLEARANCE_RETREAT_M
             print(
                 "[导航] 推车粗定位（书本坐标系）: "
-                f"robot_x_goal={target_robot_x:.3f} m, "
-                f"move_x={forward_delta:.3f} m, clearance=0.800 m"
+                f"restore_x={forward_delta:.3f} m; "
+                "0.800 m距离交给正面视觉微调"
             )
             for command in _distance_commands(
                 self.runtime,
-                forward_kind,
-                abs(forward_delta),
+                self.runtime.WandaCommandKind.DRIVE_FORWARD,
+                forward_delta,
             ):
                 adapter.execute_command(command, precision_mode=True)
                 commands_sent += 1
