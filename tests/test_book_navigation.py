@@ -9,6 +9,7 @@ from book_navigation import (
     CART_ROUTE_MAX_SEGMENT_M,
     CART_TURN_CLEARANCE_RETREAT_M,
     Stage1CartMapNavigator,
+    build_cart_final_forward_commands,
     build_cart_manhattan_commands,
     cart_transition_body_delta,
     load_navnav_runtime,
@@ -317,6 +318,31 @@ class BookNavigationTests(unittest.TestCase):
         self.assertTrue(all(precision for _row, precision in runtime.adapter.executed))
         self.assertEqual(runtime.adapter.yaw_corrections[0]["target_yaw_rad"], 0.31)
         self.assertTrue(runtime.adapter.stopped)
+
+    def test_cart_resume_executes_only_requested_final_forward_segments(self):
+        runtime = _Runtime([], absolute_yaw=0.31)
+        dx_m, _dy_m = cart_transition_body_delta()
+        expected = build_cart_final_forward_commands(runtime, dx_m, 2)
+
+        result = Stage1CartMapNavigator(
+            runtime,
+            resume_final_forward_segments=2,
+        ).navigate()
+
+        self.assertEqual(result.mode, "map-manhattan-resume")
+        self.assertEqual(result.command_count, 2)
+        self.assertEqual(
+            [(row.kind, row.value) for row, _precision in runtime.adapter.executed],
+            [(row.kind, row.value) for row in expected],
+        )
+        self.assertAlmostEqual(sum(row.value for row in expected), 0.36246, places=4)
+
+    def test_cart_resume_rejects_an_impossible_segment_count(self):
+        runtime = _Runtime([])
+        dx_m, _dy_m = cart_transition_body_delta()
+
+        with self.assertRaisesRegex(ValueError, "between 1 and 4"):
+            build_cart_final_forward_commands(runtime, dx_m, 5)
 
 
 if __name__ == "__main__":

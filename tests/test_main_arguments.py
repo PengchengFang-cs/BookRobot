@@ -52,6 +52,16 @@ class MainArgumentTests(unittest.TestCase):
 
         self.assertFalse(args.book_coarse)
 
+    def test_accepts_cart_place_final_segment_resume(self):
+        with patch.object(
+            sys,
+            "argv",
+            ["main.py", "--book-place-resume-final-segments", "2"],
+        ):
+            args = arguments()
+
+        self.assertEqual(args.book_place_resume_final_segments, 2)
+
     def test_accepts_explicit_coarse_positioning_for_pick(self):
         with patch.object(
             sys,

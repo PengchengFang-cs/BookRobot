@@ -160,15 +160,25 @@ def cart_transition_body_delta(
 class Stage1CartMapNavigator:
     """Follow an axis-aligned table-to-cart route with turn clearance."""
 
-    def __init__(self, runtime=None):
+    def __init__(self, runtime=None, *, resume_final_forward_segments=None):
         self.runtime = runtime
+        self.resume_final_forward_segments = resume_final_forward_segments
 
     def navigate(self):
         if self.runtime is None:
             self.runtime = load_navnav_runtime()
         adapter = self.runtime.WandaRos2Adapter()
         dx_m, dy_m = cart_transition_body_delta()
-        commands = build_cart_manhattan_commands(self.runtime, dx_m, dy_m)
+        if self.resume_final_forward_segments is None:
+            commands = build_cart_manhattan_commands(self.runtime, dx_m, dy_m)
+            mode = "map-manhattan"
+        else:
+            commands = build_cart_final_forward_commands(
+                self.runtime,
+                dx_m,
+                self.resume_final_forward_segments,
+            )
+            mode = "map-manhattan-resume"
         try:
             adapter.preflight()
             starting_yaw = adapter.current_absolute_imu_yaw()
@@ -182,7 +192,7 @@ class Stage1CartMapNavigator:
             pose = adapter.current_task_pose()
             return BookAlignmentExecution(
                 command_count=len(commands),
-                mode="map-manhattan",
+                mode=mode,
                 odom_dx_m=float(pose.x),
                 odom_dy_m=float(pose.y),
                 imu_dyaw_rad=float(pose.yaw),
@@ -228,3 +238,19 @@ def build_cart_manhattan_commands(runtime, dx_m, dy_m):
     )
     commands.extend(_distance_commands(runtime, forward_kind, abs(forward_m)))
     return tuple(commands)
+
+
+def build_cart_final_forward_commands(runtime, dx_m, segment_count):
+    """Return the requested trailing commands from the final forward leg."""
+
+    all_commands = _distance_commands(
+        runtime,
+        runtime.WandaCommandKind.DRIVE_FORWARD,
+        float(dx_m) + CART_TURN_CLEARANCE_RETREAT_M,
+    )
+    segment_count = int(segment_count)
+    if segment_count < 1 or segment_count > len(all_commands):
+        raise ValueError(
+            f"remaining final segments must be between 1 and {len(all_commands)}"
+        )
+    return all_commands[-segment_count:]

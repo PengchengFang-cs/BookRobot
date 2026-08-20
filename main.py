@@ -63,6 +63,12 @@ def arguments():
         help="从还书桌前地图位置导航到小推车并执行一次 Place 2.4",
     )
     operation.add_argument(
+        "--book-place-resume-final-segments",
+        type=int,
+        metavar="N",
+        help="从中断点只续跑小推车路线最后N个前进分段，再执行Place",
+    )
+    operation.add_argument(
         "--book-pick-place",
         action="store_true",
         help="串联执行一次书本 Pick、地图导航和小推车 Place",
@@ -109,6 +115,7 @@ def run_real(args):
             args.book_align
             or args.book_pick
             or args.book_place
+            or args.book_place_resume_final_segments is not None
             or args.book_pick_place
         ):
             from book_navigation import BookAlignmentNavigator, Stage1CartMapNavigator
@@ -130,11 +137,15 @@ def run_real(args):
                     timeout_s=0.5,
                 ),
             )
-            if args.book_place:
+            if args.book_place or args.book_place_resume_final_segments is not None:
                 from book_place_replay import Stage1BookPlaceReplayer
 
                 run_book_place_once(
-                    Stage1CartMapNavigator(),
+                    Stage1CartMapNavigator(
+                        resume_final_forward_segments=(
+                            args.book_place_resume_final_segments
+                        )
+                    ),
                     Stage1BookPlaceReplayer(**feedback),
                     say,
                 )
