@@ -24,9 +24,11 @@ class CartGeometryTests(unittest.TestCase):
             image_height=200,
         )
         depth = np.zeros((200, 300), dtype=float)
-        depth[30:70, 30:270] = 1.00
-        depth[80:140, 30:270] = 0.82
-        depth[150:180, 70:230] = 0.62
+        depth[25:70, 30:270] = 1.00
+        # The same top cover may produce another height band from tilt/noise;
+        # it must not be mistaken for a separate loading level.
+        depth[70:110, 30:270] = 0.96
+        depth[110:175, 30:270] = 0.82
 
         result = reconstruct_cart_top_platform(
             observation=observation,

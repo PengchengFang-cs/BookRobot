@@ -187,6 +187,7 @@ def reconstruct_cart_top_platform(
     maximum_depth_m=3.0,
     height_bin_m=0.012,
     plane_tolerance_m=0.012,
+    minimum_level_separation_m=0.10,
     minimum_depth_points=128,
     minimum_lateral_extent_m=0.42,
     minimum_forward_extent_m=0.12,
@@ -265,7 +266,7 @@ def reconstruct_cart_top_platform(
         )
         candidate_height = float(np.median(candidate[:, 2]))
         if any(
-            abs(candidate_height - existing[0]) <= 2.0 * float(plane_tolerance_m)
+            abs(candidate_height - existing[0]) < float(minimum_level_separation_m)
             for existing in candidates
         ):
             continue
