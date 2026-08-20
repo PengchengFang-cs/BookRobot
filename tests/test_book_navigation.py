@@ -137,7 +137,7 @@ class BookNavigationTests(unittest.TestCase):
         )
         self.assertTrue(runtime.adapter.stopped)
 
-    def test_cart_place_corrects_platform_yaw_before_xy(self):
+    def test_cart_place_combines_yaw_and_xy_from_one_image(self):
         runtime = _Runtime([], absolute_yaw=0.3)
         target = SimpleNamespace(
             yaw_error_rad=math.radians(2.0),
@@ -147,15 +147,15 @@ class BookNavigationTests(unittest.TestCase):
 
         result = CartPlaceDockingNavigator(runtime).align(target)
 
-        self.assertEqual(result.mode, "cart-place-yaw")
-        self.assertEqual(runtime.adapter.executed, [])
+        self.assertEqual(result.mode, "cart-place-se2")
+        self.assertGreater(len(runtime.adapter.executed), 0)
         self.assertAlmostEqual(
             runtime.adapter.yaw_corrections[0]["target_yaw_rad"],
             0.3 + math.radians(2.0),
         )
         self.assertTrue(runtime.adapter.stopped)
 
-    def test_cart_place_uses_vector_xy_after_yaw_matches(self):
+    def test_cart_place_uses_vector_xy_for_small_yaw_too(self):
         runtime = _Runtime([], absolute_yaw=0.3)
         target = SimpleNamespace(
             yaw_error_rad=math.radians(0.2),
@@ -165,10 +165,11 @@ class BookNavigationTests(unittest.TestCase):
 
         result = CartPlaceDockingNavigator(runtime).align(target)
 
-        self.assertEqual(result.mode, "cart-place-xy")
+        self.assertEqual(result.mode, "cart-place-se2")
         self.assertGreater(len(runtime.adapter.executed), 0)
         self.assertAlmostEqual(
-            runtime.adapter.yaw_corrections[-1]["target_yaw_rad"], 0.3
+            runtime.adapter.yaw_corrections[-1]["target_yaw_rad"],
+            0.3 + math.radians(0.2),
         )
         self.assertTrue(runtime.adapter.stopped)
 

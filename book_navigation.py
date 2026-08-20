@@ -16,7 +16,6 @@ CART_TURN_CLEARANCE_RETREAT_M = 0.20
 CART_ROUTE_MAX_SEGMENT_M = 0.20
 CART_SCAN_STEP_RAD = math.radians(15.0)
 CART_SCAN_STEPS = 6
-CART_PLACE_YAW_FIRST_RAD = math.radians(0.5)
 TABLE_RETURN_SCAN_ANGLES_DEG = (30, 45, 60, 75)
 
 
@@ -171,7 +170,7 @@ class BookAlignmentNavigator:
 
 
 class CartPlaceDockingNavigator:
-    """Apply one replay-platform correction; yaw is corrected in its own round."""
+    """Apply one complete replay-platform SE(2) correction from one image."""
 
     def __init__(self, runtime=None):
         self.runtime = runtime
@@ -184,32 +183,39 @@ class CartPlaceDockingNavigator:
             adapter.preflight()
             starting_yaw = adapter.current_absolute_imu_yaw()
             adapter.capture_task_origin()
-            if abs(float(target.yaw_error_rad)) > CART_PLACE_YAW_FIRST_RAD:
+            yaw_error = float(target.yaw_error_rad)
+            cosine = math.cos(yaw_error)
+            sine = math.sin(yaw_error)
+            reference_x = float(target.reference_anchor_m[0])
+            reference_y = float(target.reference_anchor_m[1])
+            rotated_reference = (
+                cosine * reference_x - sine * reference_y,
+                sine * reference_x + cosine * reference_y,
+                float(target.reference_anchor_m[2]),
+            )
+            translation = (
+                float(target.observed_anchor_m[0]) - rotated_reference[0],
+                float(target.observed_anchor_m[1]) - rotated_reference[1],
+                rotated_reference[2],
+            )
+            commands = _build_vector_commands(
+                self.runtime,
+                (0.0, 0.0, translation[2]),
+                translation,
+            )
+            for command in commands:
+                adapter.execute_command(command, precision_mode=True)
+            yaw_command_count = 0
+            if abs(yaw_error) > 1e-9:
                 adapter.correct_absolute_imu_yaw(
-                    target_yaw_rad=starting_yaw + float(target.yaw_error_rad),
+                    target_yaw_rad=starting_yaw + yaw_error,
                     tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
                 )
-                command_count = 1
-                mode = "cart-place-yaw"
-            else:
-                commands = _build_vector_commands(
-                    self.runtime,
-                    target.reference_anchor_m,
-                    target.observed_anchor_m,
-                )
-                for command in commands:
-                    adapter.execute_command(command, precision_mode=True)
-                if commands:
-                    adapter.correct_absolute_imu_yaw(
-                        target_yaw_rad=starting_yaw,
-                        tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
-                    )
-                command_count = len(commands)
-                mode = "cart-place-xy"
+                yaw_command_count = 1
             pose = adapter.current_task_pose()
             return BookAlignmentExecution(
-                command_count=command_count,
-                mode=mode,
+                command_count=len(commands) + yaw_command_count,
+                mode="cart-place-se2",
                 odom_dx_m=float(pose.x),
                 odom_dy_m=float(pose.y),
                 imu_dyaw_rad=float(pose.yaw),
