@@ -201,11 +201,8 @@ def detect_cart_black_marker_pixels(
 
     x, y, width, height = observation.bbox
     bbox_area = float(width * height)
-    search = decode_bbox_rle(
-        image_shape=expected_shape,
-        bbox=observation.bbox,
-        counts=observation.rle_counts,
-    )
+    search = np.zeros(expected_shape, dtype=bool)
+    search[y:y + height, x:x + width] = True
     gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
     dark = ((gray < gray_threshold) & search).astype(np.uint8)
     count, _labels, stats, centers = cv2.connectedComponentsWithStats(

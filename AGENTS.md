@@ -31,25 +31,26 @@
 
 ## Validation policy
 
-- Within `/home/cvailab/fpc`, all validation is disabled by default.
-- Do not run tests, linters, formatters, type checks, syntax checks, build
-  checks, import checks, smoke tests, regression suites, benchmarks, probes,
-  diagnostic captures, model inference, visual inspection pipelines, hardware
-  checks, service checks, deployment checks, Git cleanliness checks, or any
-  other command whose purpose is to verify, validate, diagnose, or confirm a
-  result unless the user explicitly approves that exact validation first.
-- Before requesting approval for validation, report to the user exactly what
-  will be run, why it is needed, what files, services, models, or hardware it
-  will touch, and the expected time or cost. Do not begin until the user gives
-  explicit approval.
-- A request to implement, modify, fix, deploy, or test a feature does not imply
-  permission for any additional validation. Perform only the actions explicitly
-  requested by the user.
-- Do not invoke Grounding DINO, SAM, OCR, depth reconstruction, camera capture,
-  or any other model or sensor merely to inspect or validate an implementation.
-  Each invocation requires prior explicit user approval.
+- During code modification, all additional validation is disabled by default.
+  Do not add or run tests, linters, formatters, type checks, builds, smoke tests,
+  regression suites, benchmarks, probes, model inference, camera captures, or
+  unrelated diagnostics unless the user explicitly requests them.
 - After editing, report that the change is unverified unless the user separately
-  approved and requested a specific validation.
+  requested validation.
+- When the user explicitly authorizes a laboratory experiment or real-robot
+  test, that authorization includes complete monitoring and diagnosis of that
+  experiment. Read relevant logs, inspect processes, services, network paths,
+  sensor/model responses, commands, feedback, and failure traces as needed to
+  determine what happened. Do not repeatedly request approval for each read-only
+  diagnostic command.
+- During an authorized experiment, keep the user informed of important live
+  observations and report the complete result and diagnosed failure cause.
+- Authorization to diagnose an experiment does not authorize source changes,
+  alternate algorithms, new mechanisms, service reconfiguration, or unrelated
+  experiments. Report the diagnosis first and obtain explicit user approval
+  before making such changes.
+- Hardware motion still requires explicit user approval and confirmation that
+  the physical environment is safe.
 
 ## Implementation scope policy
 
