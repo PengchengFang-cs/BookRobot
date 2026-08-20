@@ -200,6 +200,7 @@ def detect_cart_black_marker_pixels(
         raise CartGeometryError("opencv_unavailable") from error
 
     x, y, width, height = observation.bbox
+    minimum_area = max(8, int(round(width * height * 0.00008)))
     search = np.zeros(expected_shape, dtype=bool)
     search[y:y + height, x:x + width] = True
     gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
@@ -210,9 +211,11 @@ def detect_cart_black_marker_pixels(
 
     candidates = []
     for label in range(1, count):
-        left, top, component_width, component_height, _area = (
+        left, top, component_width, component_height, area = (
             int(value) for value in stats[label]
         )
+        if area < minimum_area:
+            continue
         center_column, center_row = (float(value) for value in centers[label])
         candidates.append((
             center_column,
