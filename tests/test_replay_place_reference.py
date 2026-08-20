@@ -111,6 +111,51 @@ class ReplayPlaceReferenceTests(unittest.TestCase):
 
         self.assertEqual(loaded, reference)
 
+    def test_uses_dedicated_book_detector_when_cart_result_has_no_book(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "place.h5"
+            with h5py.File(path, "w") as recording:
+                recording.create_dataset(
+                    "observation/image",
+                    data=np.zeros((2, 12, 16, 3), dtype=np.uint8),
+                )
+                recording.create_dataset(
+                    "observations/depth_head_rgbd",
+                    data=np.full((2, 12, 16), 1000, dtype=np.uint16),
+                )
+                recording.create_dataset(
+                    "observations/qpos_torso", data=np.full((2, 1), 0.2)
+                )
+                recording.create_dataset(
+                    "observations/qpos_head", data=np.zeros((2, 2))
+                )
+            cart = SimpleNamespace(semantic_class="cart_body")
+            book = SimpleNamespace(semantic_class="book")
+            platforms = iter((
+                _platform(left=(1.0, 0.4, 0.9), center=(1.0, 0.025, 0.9)),
+                _platform(left=(1.0, 0.4, 0.9), center=(1.0, 0.025, 0.9)),
+            ))
+            with (
+                patch(
+                    "replay_place_reference.reconstruct_cart_top_platform",
+                    side_effect=lambda **_kwargs: next(platforms),
+                ),
+                patch(
+                    "replay_place_reference._mask_center_base",
+                    return_value=np.asarray((1.0, 0.23, 0.9)),
+                ),
+            ):
+                result = calibrate_replay_place_reference(
+                    h5_path=path,
+                    asset_id="S1_CART_PLACE_BOOK",
+                    source_intrinsics=CameraIntrinsics(10.0, 10.0, 8.0, 6.0),
+                    source_size=(16, 12),
+                    detect_cart=lambda _image: (cart,),
+                    detect_book=lambda _image: (book,),
+                )
+
+        self.assertAlmostEqual(result.recorded_book_offset_from_left_m, 0.17)
+
 
 if __name__ == "__main__":
     unittest.main()

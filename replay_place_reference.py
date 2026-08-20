@@ -63,6 +63,7 @@ def calibrate_replay_place_reference(
     source_intrinsics,
     source_size,
     detect_cart,
+    detect_book=None,
     reference_frame_index=0,
     placed_frame_index=-1,
 ):
@@ -131,6 +132,8 @@ def calibrate_replay_place_reference(
         for observation in observations_by_frame[placed_index]
         if observation.semantic_class == "book"
     ]
+    if not books and detect_book is not None:
+        books = list(detect_book(np.ascontiguousarray(final_rgb[:, :, ::-1])))
     if not books:
         raise ValueError("recorded_placed_book_not_found")
     final_platform = platforms[placed_index]

@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 import sys
 import time
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -41,12 +42,12 @@ def main(argv=None):
     args = arguments(argv)
     client = BookVisionClient.from_config()
 
-    def detect(image_bgr):
+    def retry_detection(callback, image_bgr):
         last_error = None
         for attempt in range(3):
             captured_at_ns = time.time_ns()
             try:
-                return client.detect_cart(
+                return callback(
                     image_bgr,
                     captured_at_ns=captured_at_ns,
                     base_motion_epoch=f"place-calibration-base-{captured_at_ns}",
@@ -58,13 +59,28 @@ def main(argv=None):
                     time.sleep(0.2 * (attempt + 1))
         raise last_error
 
+    def detect_cart(image_bgr):
+        return retry_detection(client.detect_cart, image_bgr)
+
+    def detect_book(image_bgr):
+        books = retry_detection(client.detect, image_bgr)
+        for book in books:
+            yield SimpleNamespace(
+                semantic_class="book",
+                image_height=book.image_height,
+                image_width=book.image_width,
+                bbox=book.bbox,
+                rle_counts=book.rle_counts,
+            )
+
     try:
         reference = calibrate_replay_place_reference(
             h5_path=args.h5,
             asset_id=args.asset_id,
             source_intrinsics=SOURCE_INTRINSICS,
             source_size=SOURCE_SIZE,
-            detect_cart=detect,
+            detect_cart=detect_cart,
+            detect_book=detect_book,
             reference_frame_index=args.reference_frame,
             placed_frame_index=args.placed_frame,
         )
