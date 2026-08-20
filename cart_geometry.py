@@ -191,6 +191,7 @@ def reconstruct_cart_top_platform(
     minimum_depth_points=128,
     minimum_lateral_extent_m=0.42,
     minimum_forward_extent_m=0.12,
+    minimum_plane_fill_fraction=0.25,
 ):
     """Extract the first usable shelf below the cart's top cover."""
 
@@ -257,6 +258,31 @@ def reconstruct_cart_top_platform(
             lateral_extent < float(minimum_lateral_extent_m)
             or forward_extent < float(minimum_forward_extent_m)
         ):
+            continue
+        # A height slice through vertical side/back walls can have the same
+        # outer dimensions as a shelf while containing only a hollow U-shaped
+        # outline.  A real horizontal board occupies the interior area too.
+        grid_m = 0.02
+        lateral_cells = np.floor(
+            (lateral_projection - float(lateral_min)) / grid_m
+        ).astype(int)
+        forward_cells = np.floor(
+            (forward_projection - float(forward_min)) / grid_m
+        ).astype(int)
+        inside = (
+            (lateral_projection >= lateral_min)
+            & (lateral_projection <= lateral_max)
+            & (forward_projection >= forward_min)
+            & (forward_projection <= forward_max)
+        )
+        occupied = len(set(zip(
+            lateral_cells[inside].tolist(),
+            forward_cells[inside].tolist(),
+        )))
+        grid_width = max(1, int(np.ceil(lateral_extent / grid_m)))
+        grid_depth = max(1, int(np.ceil(forward_extent / grid_m)))
+        fill_fraction = occupied / float(grid_width * grid_depth)
+        if fill_fraction < float(minimum_plane_fill_fraction):
             continue
         candidate_geometry = (
             near, candidate, center_xy, forward_xy, lateral_xy,

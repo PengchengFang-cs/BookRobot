@@ -13,6 +13,34 @@ from cart_geometry import (
 
 
 class CartGeometryTests(unittest.TestCase):
+    def test_rejects_hollow_wall_slice_above_loading_shelf(self):
+        observation = SceneMask(
+            semantic_class="cart_body",
+            scene_profile_id="cart_loading_v1",
+            confidence=0.9,
+            bbox=(0, 0, 300, 200),
+            rle_counts=(0, 60_000),
+            image_width=300,
+            image_height=200,
+        )
+        depth = np.zeros((200, 300), dtype=float)
+        # Top cover and loading shelf are filled. The middle candidate is only
+        # a U-shaped wall slice and must not count as a physical level.
+        depth[5:45, 20:280] = 1.00
+        depth[60:64, 20:280] = 0.90
+        depth[60:125, 20:24] = 0.90
+        depth[60:125, 276:280] = 0.90
+        depth[130:195, 20:280] = 0.78
+
+        result = reconstruct_cart_top_platform(
+            observation=observation,
+            depth_m=depth,
+            intrinsics=CameraIntrinsics(300.0, 300.0, 150.0, 100.0),
+            camera_to_base=lambda point: (point[1], point[0], point[2]),
+        )
+
+        self.assertAlmostEqual(result.center[2], 0.78, places=6)
+
     def test_skips_top_cover_and_uses_upper_loading_shelf_spacing(self):
         observation = SceneMask(
             semantic_class="cart_body",
