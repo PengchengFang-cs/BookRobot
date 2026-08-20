@@ -104,8 +104,7 @@ class BookAlignmentTests(unittest.TestCase):
         )
         self.assertAlmostEqual(
             target.z_offset_m,
-            expected_observed[2]
-            - reference.recorded_book_suction_point_base_m[2],
+            0.0,
         )
 
     def test_predicts_same_book_in_new_base_with_inverse_se2_motion(self):
@@ -133,17 +132,19 @@ class BookAlignmentTests(unittest.TestCase):
 
         self.assertIs(selected, same_book)
 
-    def test_rejects_precise_z_offset_outside_thirty_millimetres(self):
+    def test_visual_z_is_diagnostic_and_never_changes_replay_height(self):
         reference = _reference(
             recorded_book_suction_point_base_m=(0.715, -0.391, 0.70)
         )
         book = _book((0.80, -0.30, 0.731))
 
-        with self.assertRaisesRegex(RuntimeError, "Z 偏移.*0.030"):
-            build_replay_alignment_target(
-                book=book,
-                replay_reference=reference,
-            )
+        target = build_replay_alignment_target(
+            book=book,
+            replay_reference=reference,
+        )
+
+        self.assertAlmostEqual(target.residual_m[2], 0.031)
+        self.assertEqual(target.z_offset_m, 0.0)
 
     def test_rejects_empty_coarse_or_reassociation_candidates(self):
         with self.assertRaisesRegex(RuntimeError, "没有检测到可对位的书本"):

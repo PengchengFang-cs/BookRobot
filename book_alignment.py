@@ -14,7 +14,6 @@ COARSE_APPROACH_REFERENCE_BASE_M = (
 )
 # Temporary compatibility name for the one-stage mission while it is migrated.
 STAGE1_PICK_REFERENCE_BASE_M = COARSE_APPROACH_REFERENCE_BASE_M
-STAGE1_MAX_Z_OFFSET_M = 0.03
 
 
 @dataclass(frozen=True)
@@ -58,13 +57,9 @@ def build_replay_alignment_target(*, book, replay_reference):
     observed = _point3(book.suction_point)
     reference = _point3(replay_reference.recorded_book_suction_point_base_m)
     residual = tuple(observed[index] - reference[index] for index in range(3))
-    z_offset_m = residual[2]
-    if abs(z_offset_m) > STAGE1_MAX_Z_OFFSET_M:
-        raise RuntimeError(
-            f"选中书本的 Z 偏移 {z_offset_m:.4f} m 超过 "
-            f"{STAGE1_MAX_Z_OFFSET_M:.3f} m"
-        )
-    return BookAlignmentTarget(book, reference, observed, residual, z_offset_m)
+    # The Stage-1 recording owns the complete torso trajectory.  Visual Z is
+    # retained in residual_m for diagnostics but never changes replay height.
+    return BookAlignmentTarget(book, reference, observed, residual, 0.0)
 
 
 def select_replay_book(books, *, replay_reference):

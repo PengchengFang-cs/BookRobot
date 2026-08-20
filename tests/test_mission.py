@@ -192,7 +192,7 @@ class BookAlignmentMissionTests(unittest.TestCase):
             _reference().recorded_book_suction_point_base_m,
         )
         self.assertAlmostEqual(result.z_offset_m, result.final.z_offset_m)
-        self.assertAlmostEqual(result.z_offset_m, 0.012)
+        self.assertEqual(result.z_offset_m, 0.0)
         self.assertTrue(result.xy_within_tolerance)
         self.assertTrue(any("0.48 m 粗定位" in message for message in messages))
         self.assertTrue(any("DataReplay 精确偏差" in message for message in messages))
@@ -211,7 +211,7 @@ class BookAlignmentMissionTests(unittest.TestCase):
             coarse=True,
         )
 
-        self.assertEqual(replayer.offsets, [result.alignment.final.z_offset_m])
+        self.assertEqual(replayer.offsets, [0.0])
         self.assertEqual(result.replay.frames_sent, 333)
         self.assertTrue(result.replay.d01_holding)
 
@@ -233,7 +233,7 @@ class BookAlignmentMissionTests(unittest.TestCase):
         self.assertIsNone(result.alignment.coarse)
         self.assertEqual(replayer.prepares, 1)
         self.assertEqual(len(navigator.calls), 1)
-        self.assertEqual(replayer.offsets, [result.alignment.final.z_offset_m])
+        self.assertEqual(replayer.offsets, [0.0])
 
     def test_pick_does_not_replay_when_final_x_exceeds_twenty_millimetres(self):
         target = _book((0.785, -0.380, 0.723))
@@ -328,7 +328,7 @@ class BookAlignmentMissionTests(unittest.TestCase):
         )
 
         self.assertEqual(len(navigator.calls), 1)
-        self.assertEqual(replayer.offsets, [result.alignment.final.z_offset_m])
+        self.assertEqual(replayer.offsets, [0.0])
 
 
 if __name__ == "__main__":
