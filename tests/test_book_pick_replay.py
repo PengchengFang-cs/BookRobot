@@ -697,6 +697,41 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
         self.assertEqual(result.data["frames_sent"], 2)
         self.assertEqual(runtime.d01_state, "holding_or_unknown")
 
+    def test_early_d01_start_only_waits_for_command_ack(self):
+        runtime, _replay, _nav, _episode_value = self._runtime()
+        episode = _episode([0.20, 0.20])
+        events = []
+        adapter = _ExactPublishAdapter(events)
+        adapter.delegate.d01_host = "127.0.0.1"
+        runtime.replay_adapter = adapter
+        runtime._start_d01_without_waiting = lambda: events.append(
+            ("d01_command_ack", "right_suction_start")
+        )
+        node = _RecordedNode(episode, events)
+        module = SimpleNamespace(
+            rclpy=SimpleNamespace(spin_once=lambda *_args, **_kwargs: None)
+        )
+        entry = {
+            "speed": 1.0,
+            "d01_events": [
+                {"frame_index": 0, "command": "right_suction_start"}
+            ],
+        }
+
+        result = runtime._publish_recorded_frames(
+            module, node, episode, entry, runtime.context, 20.0, 0
+        )
+
+        self.assertEqual(
+            events,
+            [
+                ("publish", 0),
+                ("d01_command_ack", "right_suction_start"),
+                ("publish", 1),
+            ],
+        )
+        self.assertEqual(result.status.value, "SUCCESS")
+
     def test_d01_holding_wait_does_not_delay_the_next_recorded_frame(self):
         runtime, _replay, _nav, _episode_value = self._runtime()
         episode = _episode([0.20, 0.20])

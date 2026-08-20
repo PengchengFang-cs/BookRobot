@@ -498,6 +498,15 @@ class LegacyV3PickRuntime:
         def run_event(index, event, started):
             started.set()
             try:
+                if (
+                    event["command"] == "right_suction_start"
+                    and hasattr(adapter.delegate, "d01_host")
+                ):
+                    self._start_d01_without_waiting()
+                    state = "success"
+                    with event_lock:
+                        event_states[index] = state
+                    return
                 acknowledgement = adapter.delegate.execute_d01_event(
                     event=event, context=context
                 )
@@ -599,6 +608,24 @@ class LegacyV3PickRuntime:
             frames_sent=adapter._frames_sent - before,
             episode_id=str(getattr(episode, "episode_id", "unknown")),
         )
+
+    def _start_d01_without_waiting(self):
+        """Start suction and wait only for the service command response."""
+
+        delegate = self.replay_adapter.delegate
+        callback = delegate.execute_d01_event
+        function = getattr(callback, "__func__", callback)
+        client_type = getattr(function, "__globals__", {}).get("SuctionClient")
+        if client_type is None:
+            raise RuntimeError("D01 command client is unavailable")
+        with client_type(
+            delegate.d01_host,
+            delegate.d01_port,
+            timeout_s=5.0,
+        ) as client:
+            response = client.command("start", side=delegate.d01_side)
+        if response.get("ok") is not True or response.get("action") != "start":
+            raise RuntimeError("D01 start command was not acknowledged")
 
     def replay_pick(self, episode):
         if self.entry.get("allow_base_motion") is not True:
