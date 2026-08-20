@@ -182,6 +182,8 @@ def run_book_pick_once(
 ):
     """Align one book, apply the fixed Z handoff, and replay one Pick."""
 
+    say("新一轮抓取：先自动恢复 DataReplay 第0帧观察姿态")
+    replayer.prepare()
     align = (
         run_book_alignment_once
         if coarse

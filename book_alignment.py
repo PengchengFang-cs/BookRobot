@@ -68,20 +68,22 @@ def build_replay_alignment_target(*, book, replay_reference):
 
 
 def select_replay_book(books, *, replay_reference):
-    """Choose the current book whose suction point is nearest the replay pose."""
+    """Choose the clearest current book for a fresh Pick loop."""
 
     if not books:
         raise RuntimeError("没有检测到可精确对位的书本")
     reference = _point3(replay_reference.recorded_book_suction_point_base_m)
-    candidates = []
     for book in books:
+        _point3(book.suction_point)
+
+    def rank(book):
         point = _point3(book.suction_point)
-        dx = point[0] - reference[0]
-        dy = point[1] - reference[1]
-        candidates.append((dx * dx + dy * dy, book))
-    if not candidates:
-        raise RuntimeError("没有方向和尺寸匹配的 DataReplay 目标书")
-    return min(candidates, key=lambda row: row[0])[1]
+        distance_squared = sum(
+            (point[index] - reference[index]) ** 2 for index in (0, 1)
+        )
+        return float(book.geometry.confidence), -distance_squared
+
+    return max(books, key=rank)
 
 
 def predict_book_after_base_motion(

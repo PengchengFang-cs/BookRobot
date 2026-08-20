@@ -155,6 +155,7 @@ class _Runtime:
         self.closed = False
         self.cleaned_up = False
         self.replayed_episode = None
+        self.prepared_episode = None
         self.frame_zero_torso_actual_m = None
 
     def load_episode(self):
@@ -171,6 +172,10 @@ class _Runtime:
             raise RuntimeError("replay failed")
         return SimpleNamespace(frames_sent=episode.num_frames)
 
+    def prepare_frame_zero(self, episode):
+        self.calls.append("prepare")
+        self.prepared_episode = episode
+
     def confirm_holding(self):
         self.calls.append("holding")
         return self.holding
@@ -185,6 +190,14 @@ class _Runtime:
 
 
 class Stage1BookPickReplayerTests(unittest.TestCase):
+    def test_new_loop_restores_recorded_frame_zero_before_vision(self):
+        runtime = _Runtime()
+
+        Stage1BookPickReplayer(runtime=runtime).prepare()
+
+        self.assertEqual(runtime.calls, ["load", "prepare"])
+        self.assertIs(runtime.prepared_episode, runtime.source)
+
     def test_prepositions_shifted_frame_zero_replays_once_and_confirms_holding(self):
         runtime = _Runtime()
 

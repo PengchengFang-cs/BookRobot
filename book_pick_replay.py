@@ -349,6 +349,18 @@ class LegacyV3PickRuntime:
         deadline,
         before,
     ):
+        self._restore_frame_zero(module, node, episode, deadline)
+        return self._publish_recorded_frames(
+            module,
+            node,
+            episode,
+            entry,
+            context,
+            deadline,
+            before,
+        )
+
+    def _restore_frame_zero(self, module, node, episode, deadline):
         if self.joint_positions is None:
             raise RuntimeError("frame-zero joint feedback provider is unavailable")
         self._wait_for_controller_subscribers(node, deadline)
@@ -402,15 +414,63 @@ class LegacyV3PickRuntime:
             )
         self.frame_zero_torso_actual_m = float(final_joints["body_joint"])
 
-        return self._publish_recorded_frames(
-            module,
-            node,
-            episode,
-            entry,
-            context,
-            deadline,
-            before,
+    def prepare_frame_zero(self, episode):
+        """Restore the recorded observation posture without replay or D01."""
+
+        if self.module is None:
+            raise RuntimeError("Stage-1 Pick episode must be loaded before prepare")
+        before = int(self.replay_adapter.frames_sent)
+        deadline = self.monotonic_clock() + float(self.entry["timeout_seconds"])
+        delegate = self.replay_adapter.delegate
+        original_publish = self.replay_adapter._publish_frames
+        original_tracker = getattr(delegate, "track_replay_completion", None)
+        result_class = self.replay_adapter.__class__._publish_frames.__globals__.get(
+            "BlockResult"
         )
+        if result_class is None:
+            result_class = getattr(self.replay_adapter, "_fpc_block_result", None)
+        if result_class is None:
+            raise RuntimeError("DataReplay result contract is unavailable")
+
+        def completion_tracker(*, done_event, context):
+            while not done_event.wait(0.05):
+                if self.monotonic_clock() >= deadline:
+                    return result_class.fail("frame-zero restore tracker timed out")
+            return result_class.success(
+                "frame-zero restore tracked without moving the base",
+                navigation_event=None,
+            )
+
+        def prepare_publish(module, node, loaded, entry, context, end, start):
+            self._restore_frame_zero(module, node, loaded, end)
+            return result_class.success(
+                "frame-zero observation posture restored",
+                frames_sent=0,
+            )
+
+        self.replay_adapter._publish_frames = prepare_publish
+        delegate.track_replay_completion = completion_tracker
+        try:
+            result = self.replay_adapter._run_episode(
+                self.module,
+                episode,
+                self.entry,
+                PICK_ASSET_ID,
+                self.context,
+                deadline,
+                before,
+            )
+        finally:
+            self.replay_adapter._publish_frames = original_publish
+            if original_tracker is None:
+                delattr(delegate, "track_replay_completion")
+            else:
+                delegate.track_replay_completion = original_tracker
+        if not _success(result):
+            raise RuntimeError(
+                "Stage-1 frame-zero restore failed: "
+                + str(getattr(result, "detail", "unknown error"))
+            )
 
     def _publish_recorded_frames(
         self, module, node, episode, entry, context, deadline, before
@@ -687,6 +747,15 @@ class Stage1BookPickReplayer:
         self.runtime = runtime
         self.joint_positions = joint_positions
         self.spin_feedback = spin_feedback
+
+    def prepare(self):
+        if self.runtime is None:
+            self.runtime = load_legacy_v3_pick_runtime(
+                joint_positions=self.joint_positions,
+                spin_feedback=self.spin_feedback,
+            )
+        episode = self.runtime.load_episode()
+        self.runtime.prepare_frame_zero(episode)
 
     def pick(self, z_offset_m):
         offset = _finite_offset(z_offset_m)

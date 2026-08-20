@@ -31,14 +31,21 @@ def _geometry(*, suction_point, long_axis=(1.0, 0.0, 0.0)):
     )
 
 
-def _book(point, *, long_axis=(1.0, 0.0, 0.0), long_extent=0.30, short_extent=0.20):
+def _book(
+    point,
+    *,
+    long_axis=(1.0, 0.0, 0.0),
+    long_extent=0.30,
+    short_extent=0.20,
+    confidence=0.9,
+):
     geometry = BookGeometry(
         suction_point=point,
         long_axis=long_axis,
         short_axis_right_to_left=(-long_axis[1], long_axis[0], 0.0),
         long_extent_m=long_extent,
         short_extent_m=short_extent,
-        confidence=0.9,
+        confidence=confidence,
         long_inset_m=0.13,
         right_inset_m=0.10,
     )
@@ -148,20 +155,22 @@ class BookAlignmentTests(unittest.TestCase):
                 replay_reference=_reference(),
             )
 
-    def test_selects_nearest_replay_point_across_different_book_sizes_and_yaws(self):
+    def test_new_loop_selects_highest_confidence_visible_book(self):
         angle = math.radians(10.0)
-        nearest = _book(
+        partly_occluded_nearest = _book(
             (0.71, -0.39, 0.72),
             long_axis=(math.cos(angle), math.sin(angle), 0.0),
             long_extent=0.40,
+            confidence=0.51,
         )
-        farther = _book((0.90, -0.10, 0.72))
+        clear_farther = _book((0.90, -0.10, 0.72), confidence=0.57)
 
         selected = select_replay_book(
-            [farther, nearest], replay_reference=_reference()
+            [partly_occluded_nearest, clear_farther],
+            replay_reference=_reference(),
         )
 
-        self.assertIs(selected, nearest)
+        self.assertIs(selected, clear_farther)
 
     def test_reassociation_uses_nearest_prediction_without_size_yaw_or_distance_gate(self):
         angle = math.radians(20.0)

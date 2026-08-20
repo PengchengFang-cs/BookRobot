@@ -65,6 +65,10 @@ class _AlignmentNavigator:
 class _PickReplayer:
     def __init__(self):
         self.offsets = []
+        self.prepares = 0
+
+    def prepare(self):
+        self.prepares += 1
 
     def pick(self, offset):
         self.offsets.append(offset)
@@ -227,6 +231,7 @@ class BookAlignmentMissionTests(unittest.TestCase):
         )
 
         self.assertIsNone(result.alignment.coarse)
+        self.assertEqual(replayer.prepares, 1)
         self.assertEqual(len(navigator.calls), 1)
         self.assertEqual(replayer.offsets, [result.alignment.final.z_offset_m])
 
