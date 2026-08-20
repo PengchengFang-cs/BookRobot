@@ -183,6 +183,7 @@ def reconstruct_cart_top_platform(
     intrinsics,
     camera_to_base: Callable[[tuple[float, float, float]], Sequence[float]],
     slot_offsets_from_left_m=(0.17, 0.24, 0.31, 0.38, 0.45),
+    book_depth_m=0.169,
     minimum_depth_m=0.20,
     maximum_depth_m=3.0,
     height_bin_m=0.012,
@@ -209,6 +210,9 @@ def reconstruct_cart_top_platform(
         not np.isfinite(value) or value <= 0.0 for value in slot_offsets
     ):
         _fail("cart_slot_offsets_invalid")
+    book_depth_m = float(book_depth_m)
+    if not np.isfinite(book_depth_m) or book_depth_m <= 0.0:
+        _fail("book_depth_invalid")
 
     base_points, rows, columns, mask = _masked_base_points(
         observation=observation,
@@ -329,8 +333,11 @@ def reconstruct_cart_top_platform(
 
     slot_centers = []
     slot_pixels = []
+    slot_forward_offset = book_depth_m / 2.0
     for offset in slot_offsets:
-        point = center + forward_axis * forward_mid + lateral_axis * (
+        point = center + forward_axis * (
+            forward_min + slot_forward_offset
+        ) + lateral_axis * (
             lateral_max - offset
         )
         slot_centers.append(tuple(float(value) for value in point))
