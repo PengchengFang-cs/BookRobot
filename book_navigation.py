@@ -328,28 +328,52 @@ class Stage1CartMapNavigator:
                     selected_scan_debug_image=selected_debug_image,
                 )
 
-            # At the 90-degree scan endpoint the robot faces the cart.  Express
-            # its RGB-D target in the current body frame, remove lateral error
-            # with a right-angle leg, then restore the cart-facing yaw.
-            target_in_body = _origin_point_to_body(cart_target_point, pose)
-            lateral_delta = float(target_in_body[1])
-            lateral_commands = _lateral_alignment_commands(
-                self.runtime,
-                lateral_delta,
+            # X/Y stay in the scan-origin frame, whose axes are fixed when the
+            # robot faces the books: X is forward/back and Y is left/right.
+            # The chassis is already turned left by 90 degrees, so a straight
+            # drive now executes the required Y displacement.
+            lateral_delta = float(cart_target_point[1]) - float(pose.y)
+            lateral_kind = (
+                self.runtime.WandaCommandKind.DRIVE_FORWARD
+                if lateral_delta >= 0.0
+                else self.runtime.WandaCommandKind.DRIVE_BACKWARD
             )
-            for command in lateral_commands:
+            print(
+                "[导航] 推车粗定位（书本坐标系）: "
+                f"target_x={cart_target_point[0]:.3f} m, "
+                f"target_y={cart_target_point[1]:.3f} m, "
+                f"move_y={lateral_delta:.3f} m"
+            )
+            for command in _distance_commands(
+                self.runtime,
+                lateral_kind,
+                abs(lateral_delta),
+            ):
                 adapter.execute_command(command, precision_mode=True)
                 commands_sent += 1
 
-            pose = adapter.current_task_pose()
-            target_in_body = _origin_point_to_body(cart_target_point, pose)
-            forward_delta = (
-                float(target_in_body[0]) - CART_COARSE_FRONT_CLEARANCE_M
+            return_turn = self.runtime.MappedMotionCommand(
+                self.runtime.WandaCommandKind.SPIN,
+                -math.pi / 2.0,
+                "Y",
             )
+            adapter.execute_command(return_turn, precision_mode=True)
+            commands_sent += 1
+
+            pose = adapter.current_task_pose()
+            target_robot_x = (
+                float(cart_target_point[0]) - CART_COARSE_FRONT_CLEARANCE_M
+            )
+            forward_delta = target_robot_x - float(pose.x)
             forward_kind = (
                 self.runtime.WandaCommandKind.DRIVE_FORWARD
                 if forward_delta >= 0.0
                 else self.runtime.WandaCommandKind.DRIVE_BACKWARD
+            )
+            print(
+                "[导航] 推车粗定位（书本坐标系）: "
+                f"robot_x_goal={target_robot_x:.3f} m, "
+                f"move_x={forward_delta:.3f} m, clearance=0.800 m"
             )
             for command in _distance_commands(
                 self.runtime,
@@ -360,7 +384,7 @@ class Stage1CartMapNavigator:
                 commands_sent += 1
 
             adapter.correct_absolute_imu_yaw(
-                target_yaw_rad=_normalize_yaw(starting_yaw + math.pi / 2.0),
+                target_yaw_rad=starting_yaw,
                 tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
             )
 
@@ -456,31 +480,6 @@ def transform_cart_body_target_to_origin(target, pose):
         ),
         confidence=float(target.confidence),
     )
-
-
-def _origin_point_to_body(point, pose):
-    dx = float(point[0]) - float(pose.x)
-    dy = float(point[1]) - float(pose.y)
-    x, y = _rotate_xy((dx, dy), -float(pose.yaw))
-    return (x, y, float(point[2]))
-
-
-def _lateral_alignment_commands(runtime, lateral_m):
-    if abs(float(lateral_m)) <= 1e-9:
-        return ()
-    turn = math.copysign(math.pi / 2.0, float(lateral_m))
-    commands = [
-        runtime.MappedMotionCommand(runtime.WandaCommandKind.SPIN, turn, "Y")
-    ]
-    commands.extend(_distance_commands(
-        runtime,
-        runtime.WandaCommandKind.DRIVE_FORWARD,
-        abs(float(lateral_m)),
-    ))
-    commands.append(
-        runtime.MappedMotionCommand(runtime.WandaCommandKind.SPIN, -turn, "Y")
-    )
-    return tuple(commands)
 
 
 def _platform_near_x(platform):

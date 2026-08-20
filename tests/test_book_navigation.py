@@ -476,8 +476,8 @@ class BookNavigationTests(unittest.TestCase):
             (-0.2, 0.0, CART_SCAN_STEP_RAD * index)
             for index in range(1, CART_SCAN_STEPS + 1)
         )
-        lateral_pose = (1.8, 0.0, math.pi / 2.0)
-        final_pose = (1.8, -0.3, math.pi / 2.0)
+        lateral_pose = (-0.2, 0.5, 0.0)
+        final_pose = (1.0, 0.5, 0.0)
         runtime = _Runtime(
             [],
             absolute_yaw=0.12,
@@ -520,19 +520,17 @@ class BookNavigationTests(unittest.TestCase):
         self.assertAlmostEqual(result.selected_scan_yaw_rad, math.radians(60.0))
         self.assertEqual(commands[0].kind, "backward")
         self.assertEqual([row.kind for row in commands[1:7]], ["spin"] * 6)
-        self.assertEqual(commands[7].kind, "spin")
-        self.assertAlmostEqual(commands[7].value, -math.pi / 2.0)
-        self.assertEqual([row.kind for row in commands[8:18]], ["forward"] * 10)
-        self.assertAlmostEqual(sum(row.value for row in commands[8:18]), 2.0)
-        self.assertEqual(commands[18].kind, "spin")
-        self.assertAlmostEqual(commands[18].value, math.pi / 2.0)
-        self.assertEqual([row.kind for row in commands[19:21]], ["backward"] * 2)
-        self.assertAlmostEqual(sum(row.value for row in commands[19:21]), 0.3)
-        self.assertEqual(commands[21].kind, "forward")
-        self.assertAlmostEqual(commands[21].value, 0.09)
+        self.assertEqual([row.kind for row in commands[7:10]], ["forward"] * 3)
+        self.assertAlmostEqual(sum(row.value for row in commands[7:10]), 0.5)
+        self.assertEqual(commands[10].kind, "spin")
+        self.assertAlmostEqual(commands[10].value, -math.pi / 2.0)
+        self.assertEqual([row.kind for row in commands[11:17]], ["forward"] * 6)
+        self.assertAlmostEqual(sum(row.value for row in commands[11:17]), 1.2)
+        self.assertEqual(commands[17].kind, "forward")
+        self.assertAlmostEqual(commands[17].value, 0.09)
         self.assertAlmostEqual(
             runtime.adapter.yaw_corrections[0]["target_yaw_rad"],
-            0.12 + math.pi / 2.0,
+            0.12,
         )
         self.assertAlmostEqual(
             runtime.adapter.yaw_corrections[1]["target_yaw_rad"],
