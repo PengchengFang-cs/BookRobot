@@ -179,7 +179,7 @@ def detect_cart_black_marker_pixels(
     *,
     color_bgr,
     observation,
-    gray_threshold=60,
+    gray_threshold=10,
 ):
     """Return back-left/back-right/front-left/front-right marker centers."""
 
