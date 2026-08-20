@@ -206,7 +206,7 @@ class LegacyV3PickRuntime:
         self.monotonic_clock = monotonic_clock
         self.wait_function = wait_function
         self.joint_positions = joint_positions
-        self.spin_feedback = spin_feedback or (lambda: None)
+        self.spin_feedback = spin_feedback or (lambda: True)
         self.entry = dict(replay_adapter.assets[PICK_ASSET_ID])
         self.entry["file"] = str(PICK_ASSET_PATH)
         self.entry["version"] = "stage1-dr1.2-20260819"
@@ -352,7 +352,8 @@ class LegacyV3PickRuntime:
         if self.joint_positions is None:
             raise RuntimeError("frame-zero joint feedback provider is unavailable")
         self._wait_for_controller_subscribers(node, deadline)
-        self.spin_feedback()
+        if not self.spin_feedback():
+            raise RuntimeError("fresh body_joint feedback unavailable before pre-roll")
         preroll = build_frame_zero_preroll(self.joint_positions(), episode)
         original_episode = node.episode
         try:
@@ -374,7 +375,8 @@ class LegacyV3PickRuntime:
         for _attempt in range(FRAME_ZERO_SETTLE_SAMPLES):
             if self.monotonic_clock() >= deadline:
                 break
-            self.spin_feedback()
+            if not self.spin_feedback():
+                continue
             final_joints = self.joint_positions()
             arm_error, head_error, torso_error = self._feedback_error(
                 final_joints, episode

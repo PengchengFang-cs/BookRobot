@@ -573,7 +573,7 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
             },
         ]
         runtime.joint_positions = lambda: feedback.pop(0)
-        runtime.spin_feedback = lambda: None
+        runtime.spin_feedback = lambda: True
         events = []
         node = _ReplayNode(episode, events)
         module = SimpleNamespace(
@@ -608,6 +608,46 @@ class LegacyV3PickRuntimeTests(unittest.TestCase):
             events[-1][1],
             [{"frame_index": 20, "command": "right_suction_start"}],
         )
+
+    def test_stale_frame_zero_feedback_never_enters_recorded_frames(self):
+        runtime, _replay, _nav, episode = self._runtime()
+        target_arms = episode.actions["target_qpos_arms"][0]
+        target_head = episode.actions["target_qpos_head"][0]
+        cached_joints = {
+            **{
+                f"joint_la{i}": float(target_arms[i])
+                for i in range(8)
+            },
+            **{
+                f"joint_ra{i}": float(target_arms[i + 8])
+                for i in range(8)
+            },
+            "joint_head0": float(target_head[0]),
+            "joint_head1": float(target_head[1]),
+            "body_joint": float(episode.actions["target_qpos_torso"][0, 0]),
+        }
+        runtime.joint_positions = lambda: dict(cached_joints)
+        runtime.spin_feedback = lambda: False
+        runtime._publish_recorded_frames = (
+            lambda *_args, **_kwargs: self.fail(
+                "stale feedback must not enter recorded frames"
+            )
+        )
+        node = _ReplayNode(episode, [])
+        module = SimpleNamespace(
+            rclpy=SimpleNamespace(spin_once=lambda *_args, **_kwargs: None)
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "fresh body_joint"):
+            runtime._publish_exact_frames(
+                module,
+                node,
+                episode,
+                runtime.entry,
+                runtime.context,
+                20.0,
+                0,
+            )
 
     def test_recorded_frame_is_published_before_its_d01_event_without_delay(self):
         runtime, _replay, _nav, _episode_value = self._runtime()
