@@ -31,6 +31,23 @@ def _platform(*, left, center, confidence=0.9):
 
 
 class ReplayPlaceReferenceTests(unittest.TestCase):
+    def test_checked_in_place24_reference_uses_measured_sloped_platform(self):
+        reference = load_replay_place_reference(
+            Path(__file__).resolve().parents[1]
+            / "config"
+            / "stage1_place_reference.json"
+        )
+
+        self.assertAlmostEqual(reference.platform_width_m, 0.75)
+        self.assertAlmostEqual(reference.platform_depth_m, 0.29)
+        self.assertGreater(
+            abs(reference.platform_forward_axis_base[2]), 0.10
+        )
+        self.assertNotAlmostEqual(
+            reference.platform_front_edge_base_m[2],
+            reference.platform_right_edge_base_m[2],
+        )
+
     def test_calibrates_frame_zero_platform_and_recorded_book_offset(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "place.h5"

@@ -19,7 +19,7 @@ from book_rpc import BookVisionClient
 from cart_geometry import (
     CartGeometryError,
     reconstruct_cart_body_target,
-    reconstruct_cart_top_platform,
+    reconstruct_cart_marker_platform,
     select_leftmost_cart_platform,
 )
 from config import (
@@ -340,9 +340,12 @@ class Vision:
                     body_candidates.append(reconstruct_cart_body_target(
                         **geometry_args
                     ))
-                    platform_candidates.append(reconstruct_cart_top_platform(
-                        **geometry_args
-                    ))
+                    platform_candidates.append(
+                        reconstruct_cart_marker_platform(
+                            color_bgr=color,
+                            **geometry_args,
+                        )
+                    )
             except CartGeometryError as error:
                 print(f"[视觉] 小推车几何不可用: {error}")
         body_target = (

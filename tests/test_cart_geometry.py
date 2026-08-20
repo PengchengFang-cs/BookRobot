@@ -5,13 +5,80 @@ import numpy as np
 from book_geometry import CameraIntrinsics
 from book_rpc import SceneMask
 from cart_geometry import (
+    detect_cart_black_marker_pixels,
     reconstruct_cart_body_target,
+    reconstruct_cart_marker_platform,
     reconstruct_cart_top_platform,
     select_leftmost_cart_platform,
 )
 
 
 class CartGeometryTests(unittest.TestCase):
+    @staticmethod
+    def _marker_scene():
+        observation = SceneMask(
+            semantic_class="cart_body",
+            scene_profile_id="cart_loading_v1",
+            confidence=0.92,
+            bbox=(20, 20, 260, 160),
+            rle_counts=(0, 41_600),
+            image_width=300,
+            image_height=200,
+        )
+        color = np.full((200, 300, 3), 235, dtype=np.uint8)
+        rectangles = (
+            (45, 70, 7, 3),
+            (245, 75, 7, 3),
+            (40, 130, 8, 3),
+            (250, 135, 8, 3),
+        )
+        for x, y, width, height in rectangles:
+            color[y:y + height, x:x + width] = 20
+        rows = np.arange(200, dtype=float)[:, None]
+        depth = np.broadcast_to(0.90 + (140.0 - rows) * 0.003, (200, 300)).copy()
+        return observation, color, depth
+
+    def test_detects_exactly_four_black_cart_markers(self):
+        observation, color, _depth = self._marker_scene()
+
+        markers = detect_cart_black_marker_pixels(
+            color_bgr=color,
+            observation=observation,
+        )
+
+        self.assertEqual(
+            tuple(marker["center"] for marker in markers),
+            ((48, 71), (248, 76), (44, 131), (254, 136)),
+        )
+
+    def test_marker_platform_preserves_real_slope_and_physical_dimensions(self):
+        observation, color, depth = self._marker_scene()
+
+        result = reconstruct_cart_marker_platform(
+            observation=observation,
+            color_bgr=color,
+            depth_m=depth,
+            intrinsics=CameraIntrinsics(300.0, 300.0, 150.0, 100.0),
+            camera_to_base=lambda point: (point[2], -point[0], -point[1]),
+        )
+
+        self.assertAlmostEqual(result.lateral_extent_m, 0.75)
+        self.assertAlmostEqual(result.depth_extent_m, 0.29)
+        self.assertEqual(len(result.slot_centers), 5)
+        self.assertGreater(abs(result.forward_axis[2]), 0.01)
+        self.assertGreater(abs(result.normal[0]), 0.01)
+        left = np.asarray(result.left_edge)
+        lateral = np.asarray(result.lateral_axis_right_to_left)
+        offsets = [
+            float(np.dot(left - np.asarray(point), lateral))
+            for point in result.slot_centers
+        ]
+        np.testing.assert_allclose(
+            offsets,
+            (0.17, 0.24, 0.31, 0.38, 0.45),
+            atol=1e-9,
+        )
+
     def test_rejects_hollow_wall_slice_above_loading_shelf(self):
         observation = SceneMask(
             semantic_class="cart_body",

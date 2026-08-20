@@ -175,6 +175,251 @@ def _nearest_pixel(point, base_points, rows, columns):
     return int(columns[nearest]), int(rows[nearest])
 
 
+def detect_cart_black_marker_pixels(
+    *,
+    color_bgr,
+    observation,
+    gray_threshold=160,
+):
+    """Return back-left/back-right/front-left/front-right marker centers."""
+
+    if not isinstance(observation, SceneMask):
+        _fail("cart_mask_invalid")
+    if observation.semantic_class != "cart_body":
+        _fail("cart_body_mask_required")
+    color = np.asarray(color_bgr)
+    expected_shape = (observation.image_height, observation.image_width)
+    if color.shape != expected_shape + (3,):
+        _fail("cart_color_shape_mismatch")
+    if type(gray_threshold) is not int or not 0 <= gray_threshold <= 255:
+        _fail("cart_marker_threshold_invalid")
+
+    try:
+        import cv2
+    except Exception as error:
+        raise CartGeometryError("opencv_unavailable") from error
+
+    x, y, width, height = observation.bbox
+    bbox_area = float(width * height)
+    search = decode_bbox_rle(
+        image_shape=expected_shape,
+        bbox=observation.bbox,
+        counts=observation.rle_counts,
+    )
+    gray = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
+    dark = ((gray < gray_threshold) & search).astype(np.uint8)
+    count, _labels, stats, centers = cv2.connectedComponentsWithStats(
+        dark, connectivity=8
+    )
+
+    minimum_area = max(8, int(round(bbox_area * 0.00008)))
+    maximum_area = max(minimum_area, int(round(bbox_area * 0.00080)))
+    candidates = []
+    for label in range(1, count):
+        left, top, component_width, component_height, area = (
+            int(value) for value in stats[label]
+        )
+        if not minimum_area <= area <= maximum_area:
+            continue
+        if not (
+            max(4, int(round(width * 0.010)))
+            <= component_width
+            <= max(8, int(round(width * 0.070)))
+        ):
+            continue
+        if not (
+            max(2, int(round(height * 0.004)))
+            <= component_height
+            <= max(5, int(round(height * 0.040)))
+        ):
+            continue
+        aspect_ratio = component_width / component_height
+        if not 1.2 <= aspect_ratio <= 6.0:
+            continue
+        center_column, center_row = (float(value) for value in centers[label])
+        candidates.append((
+            center_column,
+            center_row,
+            left,
+            top,
+            component_width,
+            component_height,
+        ))
+
+    if len(candidates) != 4:
+        _fail(f"cart_marker_count_invalid:{len(candidates)}")
+    candidates.sort(key=lambda item: (item[1], item[0]))
+    back = sorted(candidates[:2], key=lambda item: item[0])
+    front = sorted(candidates[2:], key=lambda item: item[0])
+
+    def marker(candidate):
+        center_column, center_row, left, top, marker_width, marker_height = candidate
+        return {
+            "center": (int(round(center_column)), int(round(center_row))),
+            "bbox": (left, top, marker_width, marker_height),
+        }
+
+    return tuple(marker(item) for item in (back[0], back[1], front[0], front[1]))
+
+
+def reconstruct_cart_marker_platform(
+    *,
+    observation,
+    color_bgr,
+    depth_m,
+    intrinsics,
+    camera_to_base: Callable[[tuple[float, float, float]], Sequence[float]],
+    slot_offsets_from_left_m=(0.17, 0.24, 0.31, 0.38, 0.45),
+    platform_width_m=0.75,
+    platform_depth_m=0.29,
+    gray_threshold=160,
+    minimum_depth_m=0.20,
+    maximum_depth_m=3.0,
+):
+    """Build the sloped loading plane from four black edge markers."""
+
+    if not isinstance(intrinsics, CameraIntrinsics):
+        _fail("camera_intrinsics_invalid")
+    if not callable(camera_to_base):
+        _fail("camera_transform_invalid")
+    dimensions = np.asarray((platform_width_m, platform_depth_m), dtype=float)
+    if not np.all(np.isfinite(dimensions)) or np.any(dimensions <= 0.0):
+        _fail("cart_marker_dimensions_invalid")
+    slot_offsets = tuple(float(value) for value in slot_offsets_from_left_m)
+    if not slot_offsets or any(
+        not np.isfinite(value)
+        or value <= 0.0
+        or value >= float(platform_width_m)
+        for value in slot_offsets
+    ):
+        _fail("cart_slot_offsets_invalid")
+
+    markers = detect_cart_black_marker_pixels(
+        color_bgr=color_bgr,
+        observation=observation,
+        gray_threshold=gray_threshold,
+    )
+    depth = np.asarray(depth_m, dtype=float)
+    expected_shape = (observation.image_height, observation.image_width)
+    if depth.shape != expected_shape:
+        _fail("depth_shape_mismatch")
+
+    marker_points = []
+    for marker in markers:
+        left, top, width, height = marker["bbox"]
+        padding = 2
+        row_start = max(0, top - padding)
+        row_stop = min(expected_shape[0], top + height + padding)
+        column_start = max(0, left - padding)
+        column_stop = min(expected_shape[1], left + width + padding)
+        patch = depth[row_start:row_stop, column_start:column_stop]
+        valid = (
+            np.isfinite(patch)
+            & (patch >= float(minimum_depth_m))
+            & (patch <= float(maximum_depth_m))
+        )
+        values = patch[valid]
+        if values.size < 4:
+            _fail("cart_marker_depth_insufficient")
+        value = float(np.median(values))
+        column, row = marker["center"]
+        camera_point = (
+            (float(column) - intrinsics.cx) * value / intrinsics.fx,
+            (float(row) - intrinsics.cy) * value / intrinsics.fy,
+            value,
+        )
+        try:
+            point = np.asarray(camera_to_base(camera_point), dtype=float)
+        except Exception as error:
+            raise CartGeometryError("camera_transform_failed") from error
+        if point.shape != (3,) or not np.all(np.isfinite(point)):
+            _fail("cart_marker_point_invalid")
+        marker_points.append(point)
+
+    back_left, back_right, front_left, front_right = marker_points
+    raw_lateral = 0.5 * (
+        (back_left - back_right) + (front_left - front_right)
+    )
+    raw_forward = 0.5 * (
+        (back_left - front_left) + (back_right - front_right)
+    )
+    forward_norm = float(np.linalg.norm(raw_forward))
+    if forward_norm <= 1e-6:
+        _fail("cart_marker_forward_axis_invalid")
+    forward_axis = raw_forward / forward_norm
+    lateral_axis = raw_lateral - forward_axis * float(
+        np.dot(raw_lateral, forward_axis)
+    )
+    lateral_norm = float(np.linalg.norm(lateral_axis))
+    if lateral_norm <= 1e-6:
+        _fail("cart_marker_lateral_axis_invalid")
+    lateral_axis /= lateral_norm
+    normal = np.cross(forward_axis, lateral_axis)
+    normal_norm = float(np.linalg.norm(normal))
+    if normal_norm <= 1e-6:
+        _fail("cart_marker_plane_invalid")
+    normal /= normal_norm
+    if normal[2] < 0.0:
+        lateral_axis = -lateral_axis
+        normal = -normal
+    if forward_axis[0] < 0.0:
+        forward_axis = -forward_axis
+        normal = -normal
+    if lateral_axis[1] < 0.0:
+        lateral_axis = -lateral_axis
+        normal = -normal
+
+    center = np.mean(np.asarray(marker_points), axis=0)
+    half_width = float(platform_width_m) / 2.0
+    half_depth = float(platform_depth_m) / 2.0
+    front_edge = center - forward_axis * half_depth
+    left_edge = center + lateral_axis * half_width
+    right_edge = center - lateral_axis * half_width
+    corners = (
+        center - forward_axis * half_depth + lateral_axis * half_width,
+        center + forward_axis * half_depth + lateral_axis * half_width,
+        center + forward_axis * half_depth - lateral_axis * half_width,
+        center - forward_axis * half_depth - lateral_axis * half_width,
+    )
+    slot_centers = tuple(
+        tuple(float(value) for value in (
+            center + lateral_axis * (half_width - offset)
+        ))
+        for offset in slot_offsets
+    )
+
+    base_points, rows, columns, _mask = _masked_base_points(
+        observation=observation,
+        depth_m=depth,
+        intrinsics=intrinsics,
+        camera_to_base=camera_to_base,
+        minimum_depth_m=minimum_depth_m,
+        maximum_depth_m=maximum_depth_m,
+    )
+    slot_pixels = tuple(
+        _nearest_pixel(np.asarray(point), base_points, rows, columns)
+        for point in slot_centers
+    )
+    outline_pixels = tuple(
+        _nearest_pixel(point, base_points, rows, columns) for point in corners
+    )
+    return CartPlatformGeometry(
+        center=tuple(float(value) for value in center),
+        forward_axis=tuple(float(value) for value in forward_axis),
+        lateral_axis_right_to_left=tuple(float(value) for value in lateral_axis),
+        normal=tuple(float(value) for value in normal),
+        depth_extent_m=float(platform_depth_m),
+        lateral_extent_m=float(platform_width_m),
+        slot_centers=slot_centers,
+        slot_pixels=slot_pixels,
+        front_edge=tuple(float(value) for value in front_edge),
+        left_edge=tuple(float(value) for value in left_edge),
+        right_edge=tuple(float(value) for value in right_edge),
+        outline_pixels=outline_pixels,
+        confidence=float(observation.confidence),
+    )
+
+
 def reconstruct_cart_top_platform(
     *,
     observation,
