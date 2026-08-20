@@ -69,6 +69,18 @@ class MainArgumentTests(unittest.TestCase):
         )
         self.assertIn(" --book-place-resume-final-segments ", run_script)
 
+    def test_accepts_motionless_cart_perception(self):
+        with patch.object(sys, "argv", ["main.py", "--cart-perception"]):
+            args = arguments()
+
+        self.assertTrue(args.cart_perception)
+        from pathlib import Path
+
+        run_script = (Path(__file__).resolve().parents[1] / "run.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(" --cart-perception ", run_script)
+
     def test_accepts_explicit_coarse_positioning_for_pick(self):
         with patch.object(
             sys,

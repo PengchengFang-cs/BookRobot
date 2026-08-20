@@ -24,6 +24,23 @@ class _Vision:
         return next(self.results)
 
 
+class _StableVision:
+    def __init__(self, sample_groups):
+        self.sample_groups = iter(sample_groups)
+        self.calls = []
+
+    def find_samples(
+        self,
+        target,
+        frame,
+        *,
+        successful_samples,
+        maximum_attempts,
+    ):
+        self.calls.append((target, frame, successful_samples, maximum_attempts))
+        return next(self.sample_groups)
+
+
 class _Navigation:
     def __init__(self):
         self.approach_inputs = []
@@ -198,8 +215,8 @@ class BookAlignmentMissionTests(unittest.TestCase):
         self.assertEqual(result.z_offset_m, 0.0)
         self.assertTrue(result.xy_within_tolerance)
         self.assertTrue(any("0.48 m 粗定位" in message for message in messages))
-        self.assertTrue(any("DataReplay 精确偏差" in message for message in messages))
-        self.assertTrue(any("最终 DataReplay 残差" in message for message in messages))
+        self.assertTrue(any("DataReplay 细校准" in message for message in messages))
+        self.assertTrue(any("XY验收=达标" in message for message in messages))
 
     def test_explicit_coarse_pick_receives_final_stage_z_offset(self):
         vision, navigator, _initial, _after_coarse, _final = self._scenario()
@@ -241,8 +258,12 @@ class BookAlignmentMissionTests(unittest.TestCase):
     def test_pick_does_not_replay_when_final_x_exceeds_twenty_millimetres(self):
         target = _book((0.785, -0.380, 0.723))
         final_target = _book((0.736, -0.390, 0.723))
-        vision = _Vision([[target], [final_target]])
-        navigator = _AlignmentNavigator([_nav_result(0.070, 0.010)])
+        vision = _Vision([[target], [final_target], [final_target], [final_target]])
+        navigator = _AlignmentNavigator([
+            _nav_result(0.070, 0.010),
+            _nav_result(0.0, 0.0),
+            _nav_result(0.0, 0.0),
+        ])
         replayer = _PickReplayer()
 
         with self.assertRaisesRegex(RuntimeError, "最终对位未达标"):
@@ -259,8 +280,12 @@ class BookAlignmentMissionTests(unittest.TestCase):
     def test_pick_does_not_replay_when_final_y_exceeds_ten_millimetres(self):
         target = _book((0.785, -0.380, 0.723))
         final_target = _book((0.715, -0.379, 0.723))
-        vision = _Vision([[target], [final_target]])
-        navigator = _AlignmentNavigator([_nav_result(0.070, 0.010)])
+        vision = _Vision([[target], [final_target], [final_target], [final_target]])
+        navigator = _AlignmentNavigator([
+            _nav_result(0.070, 0.010),
+            _nav_result(0.0, 0.0),
+            _nav_result(0.0, 0.0),
+        ])
         replayer = _PickReplayer()
 
         with self.assertRaisesRegex(RuntimeError, "最终对位未达标"):
@@ -350,6 +375,33 @@ class BookAlignmentMissionTests(unittest.TestCase):
         )
 
         self.assertEqual(replayer.offsets, [-0.010])
+
+    def test_stable_vision_and_alignment_repeat_without_agent_restart(self):
+        initial = [_book((0.786, -0.380 + jitter, 0.723)) for jitter in (-0.001, 0, 0.001)]
+        after_first = [_book((0.708, -0.372 + jitter, 0.723)) for jitter in (-0.001, 0, 0.001)]
+        after_second = [_book((0.716, -0.389 + jitter, 0.723)) for jitter in (-0.001, 0, 0.001)]
+        vision = _StableVision((
+            tuple([book] for book in initial),
+            tuple([book] for book in after_first),
+            tuple([book] for book in after_second),
+        ))
+        navigator = _AlignmentNavigator([
+            _nav_result(0.071, 0.011),
+            _nav_result(-0.007, 0.019),
+        ])
+
+        result = run_book_alignment_from_current_once(
+            vision,
+            navigator,
+            _reference(),
+            say=lambda _message: None,
+        )
+
+        self.assertTrue(result.xy_within_tolerance)
+        self.assertEqual(len(navigator.calls), 2)
+        self.assertEqual(len(vision.calls), 3)
+        self.assertAlmostEqual(result.final.residual_m[0], 0.001)
+        self.assertAlmostEqual(result.final.residual_m[1], 0.002)
 
 
 class BookPlaceMissionTests(unittest.TestCase):

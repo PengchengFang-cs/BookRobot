@@ -15,6 +15,7 @@ from sensor_msgs.msg import CameraInfo, Image, JointState
 from book_frame import detect_book_frame
 from book_geometry import CameraIntrinsics, decode_bbox_rle
 from book_rpc import BookVisionClient
+from cart_geometry import CartGeometryError, reconstruct_cart_platform
 from config import (
     BODY_JOINT_STATES_TOPIC,
     CAMERA_INFO_TOPIC,
@@ -26,7 +27,11 @@ from config import (
     VISION_WARMUP_S,
 )
 from geometry import apply_ros_transform, camera_point_to_base
-from sensor_sync import SensorSynchronizer, spin_until_counter_advances
+from sensor_sync import (
+    SensorSynchronizer,
+    collect_successful_results,
+    spin_until_counter_advances,
+)
 
 
 @dataclass(frozen=True)
@@ -35,6 +40,14 @@ class LocatedBook:
     geometry: object
     frame_id: str
     suction_point: tuple[float, float, float]
+
+
+@dataclass(frozen=True)
+class LocatedCart:
+    observations: tuple[object, ...]
+    platform: object
+    frame_id: str
+    captured_at_ns: int
 
 
 class Vision:
@@ -187,13 +200,9 @@ class Vision:
         cv2.imwrite(str(self.debug_path), color)
 
     def _detect_once(self, snapshot, joints):
-        color = self.bridge.imgmsg_to_cv2(snapshot.color, desired_encoding="bgr8")
-        depth = self.bridge.imgmsg_to_cv2(snapshot.depth, desired_encoding="passthrough")
-        if color.shape[:2] != depth.shape[:2]:
+        color, depth = self._snapshot_arrays(snapshot)
+        if color is None:
             return None
-        depth = depth.astype(float)
-        if snapshot.depth.encoding.upper() == "16UC1":
-            depth /= 1000.0
 
         body = joints["body_joint"]
         head_yaw = joints["joint_head0"]
@@ -221,6 +230,131 @@ class Vision:
             return None
         self._save_debug_overlay(color, books)
         return books, captured_at_ns
+
+    def _snapshot_arrays(self, snapshot):
+        color = self.bridge.imgmsg_to_cv2(snapshot.color, desired_encoding="bgr8")
+        depth = self.bridge.imgmsg_to_cv2(snapshot.depth, desired_encoding="passthrough")
+        if color.shape[:2] != depth.shape[:2]:
+            return None, None
+        depth = depth.astype(float)
+        if snapshot.depth.encoding.upper() == "16UC1":
+            depth /= 1000.0
+        return color, depth
+
+    def _detect_cart_once(self, snapshot, joints):
+        color, depth = self._snapshot_arrays(snapshot)
+        if color is None:
+            return None
+        body = joints["body_joint"]
+        head_yaw = joints["joint_head0"]
+        head_pitch = joints["joint_head1"]
+        captured_at_ns = snapshot.captured_at_ns
+        observations = self.book_client.detect_cart(
+            color,
+            captured_at_ns=captured_at_ns,
+            base_motion_epoch=f"fruittest-base-capture-{captured_at_ns}",
+            head_motion_epoch=f"fruittest-head-capture-{captured_at_ns}",
+        )
+        if not observations:
+            return None
+        platform = None
+        for observation in observations:
+            if observation.semantic_class != "cart_platform":
+                continue
+            try:
+                platform = reconstruct_cart_platform(
+                    observation=observation,
+                    depth_m=depth,
+                    intrinsics=CameraIntrinsics(
+                        fx=float(snapshot.info.k[0]),
+                        fy=float(snapshot.info.k[4]),
+                        cx=float(snapshot.info.k[2]),
+                        cy=float(snapshot.info.k[5]),
+                    ),
+                    camera_to_base=lambda point: camera_point_to_base(
+                        point, body, head_yaw, head_pitch
+                    ),
+                )
+                break
+            except CartGeometryError as error:
+                print(f"[视觉] 小推车顶面几何不可用: {error}")
+        self._save_cart_debug_overlay(color, observations, platform)
+        return LocatedCart(
+            observations=tuple(observations),
+            platform=platform,
+            frame_id="base_link",
+            captured_at_ns=captured_at_ns,
+        )
+
+    def _save_cart_debug_overlay(self, color, observations, platform):
+        overlay = color.copy()
+        for observation in observations:
+            mask = decode_bbox_rle(
+                image_shape=color.shape[:2],
+                bbox=observation.bbox,
+                counts=observation.rle_counts,
+            )
+            draw_color = (
+                (0, 220, 255)
+                if observation.semantic_class == "cart_platform"
+                else (255, 120, 0)
+            )
+            overlay[mask] = draw_color
+            x, y, width, height = observation.bbox
+            cv2.rectangle(color, (x, y), (x + width, y + height), draw_color, 3)
+            cv2.putText(
+                color,
+                f"{observation.semantic_class} {observation.confidence:.2f}",
+                (x, max(30, y - 10)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65,
+                draw_color,
+                2,
+            )
+        color[:] = cv2.addWeighted(color, 0.65, overlay, 0.35, 0.0)
+        if platform is not None:
+            for index, pixel in enumerate(platform.slot_pixels, 1):
+                cv2.circle(color, pixel, 9, (0, 0, 255), -1)
+                cv2.putText(
+                    color,
+                    str(index),
+                    (pixel[0] + 10, pixel[1] - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (0, 0, 255),
+                    2,
+                )
+        cv2.imwrite(str(self.debug_path), color)
+
+    def find_cart(self):
+        """Return one cart-loading observation without any robot motion."""
+
+        started = time.monotonic()
+        deadline = started + VISION_TIMEOUT_S
+        needed_joints = ("body_joint", "joint_head0", "joint_head1")
+        warmup_deadline = min(deadline, started + VISION_WARMUP_S)
+        while rclpy.ok() and time.monotonic() < warmup_deadline:
+            rclpy.spin_once(self.node, timeout_sec=0.10)
+        while rclpy.ok() and time.monotonic() < deadline:
+            rclpy.spin_once(self.node, timeout_sec=0.10)
+            selected = self.sensor_sync.select(
+                arrived_after_s=started,
+                captured_after_ns=self.last_capture_ns,
+                required_joints=needed_joints,
+            )
+            if selected is None:
+                continue
+            snapshot, joints = selected
+            self.last_capture_ns = snapshot.captured_at_ns
+            try:
+                result = self._detect_cart_once(snapshot, joints)
+                if result is not None:
+                    return result
+                print("[视觉] 当前帧没有检测到小推车")
+            except Exception as error:
+                self.node.get_logger().warning(f"小推车检测帧不能用: {error}")
+                print(f"[视觉] 小推车检测帧不能用: {type(error).__name__}: {error}")
+        return None
 
     def find(self, target="book", frame="map"):
         if target != "book":
@@ -287,3 +421,31 @@ class Vision:
             f"info={len(self.sensor_sync.infos)}"
         )
         return []
+
+    def find_samples(
+        self,
+        target="book",
+        frame="map",
+        *,
+        successful_samples=3,
+        maximum_attempts=5,
+    ):
+        """Collect distinct successful detections, retrying missed frames."""
+
+        def report(attempt, success_count, found):
+            if found:
+                print(
+                    f"[视觉] 稳定采样 {success_count}/{successful_samples} "
+                    f"(尝试 {attempt}/{maximum_attempts})"
+                )
+            else:
+                print(
+                    f"[视觉] 第 {attempt}/{maximum_attempts} 次没有检测结果，继续"
+                )
+
+        return collect_successful_results(
+            lambda: self.find(target, frame=frame),
+            successful_samples=successful_samples,
+            maximum_attempts=maximum_attempts,
+            on_attempt=report,
+        )

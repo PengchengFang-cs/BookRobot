@@ -49,6 +49,31 @@ def spin_until_counter_advances(
     return True
 
 
+def collect_successful_results(
+    find_once,
+    *,
+    successful_samples=3,
+    maximum_attempts=5,
+    on_attempt=None,
+):
+    """Retry a detector and return distinct non-empty results."""
+
+    successful_samples = int(successful_samples)
+    maximum_attempts = int(maximum_attempts)
+    if successful_samples < 1 or maximum_attempts < successful_samples:
+        raise ValueError("视觉采样次数无效")
+    samples = []
+    for attempt in range(1, maximum_attempts + 1):
+        result = find_once()
+        if result:
+            samples.append(result)
+        if on_attempt is not None:
+            on_attempt(attempt, len(samples), bool(result))
+        if len(samples) == successful_samples:
+            break
+    return tuple(samples)
+
+
 def message_stamp_ns(message):
     stamp = message.header.stamp
     return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)

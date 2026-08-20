@@ -2,6 +2,7 @@
 """FruitTest 入口。主流程故意保持成小朋友也能读懂的样子。"""
 
 import argparse
+import json
 import sys
 
 from geometry import fruit_from_text
@@ -73,6 +74,11 @@ def arguments():
         action="store_true",
         help="串联执行一次书本 Pick、地图导航和小推车 Place",
     )
+    operation.add_argument(
+        "--cart-perception",
+        action="store_true",
+        help="只检测小推车顶面并输出五个槽位，不产生运动",
+    )
     parser.add_argument(
         "--book-align-mode",
         choices=("legacy", "vector"),
@@ -117,6 +123,7 @@ def run_real(args):
             or args.book_place
             or args.book_place_resume_final_segments is not None
             or args.book_pick_place
+            or args.cart_perception
         ):
             from book_navigation import BookAlignmentNavigator, Stage1CartMapNavigator
             from config import REPLAY_PICK_REFERENCE_PATH
@@ -126,6 +133,32 @@ def run_real(args):
             tf_buffer = Buffer()
             tf_listener = TransformListener(tf_buffer, node)
             vision = Vision(node, tf_buffer)
+
+            if args.cart_perception:
+                cart = vision.find_cart()
+                platform = None if cart is None else cart.platform
+                payload = {
+                    "ok": cart is not None,
+                    "classes": [] if cart is None else [
+                        row.semantic_class for row in cart.observations
+                    ],
+                    "frame_id": None if cart is None else cart.frame_id,
+                    "platform_center_m": (
+                        None if platform is None else platform.center
+                    ),
+                    "platform_lateral_extent_m": (
+                        None if platform is None else platform.lateral_extent_m
+                    ),
+                    "platform_depth_extent_m": (
+                        None if platform is None else platform.depth_extent_m
+                    ),
+                    "slot_centers_m": (
+                        [] if platform is None else platform.slot_centers
+                    ),
+                    "debug_image": str(vision.debug_path),
+                }
+                print(json.dumps(payload, ensure_ascii=False))
+                return
 
             say = lambda text: print(f"[机器人] {text}")
             feedback = dict(

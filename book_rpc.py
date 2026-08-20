@@ -14,6 +14,9 @@ from book_geometry import BookMask
 
 SCENE_TASK = "scene_table_books_segmentation"
 SCENE_PROFILE = "table_books_v1"
+CART_SCENE_TASK = "scene_cart_loading_segmentation"
+CART_SCENE_PROFILE = "cart_loading_v1"
+CART_SCENE_CLASSES = ("cart_body", "cart_platform", "book")
 VISION_METHOD = "/bookbot.vision.v2.VisionService/Infer"
 MAX_REQUEST_BYTES = 64 * 1024 * 1024
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -21,6 +24,17 @@ MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
 class BookVisionError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class SceneMask:
+    semantic_class: str
+    scene_profile_id: str
+    confidence: float
+    bbox: tuple[int, int, int, int]
+    rle_counts: tuple[int, ...]
+    image_width: int
+    image_height: int
 
 
 def grpc_channel_options(server_name):
@@ -177,6 +191,7 @@ class BookVisionClient:
         captured_at_ns,
         base_motion_epoch,
         head_motion_epoch,
+        task=SCENE_TASK,
     ):
         image = np.asarray(image_bgr)
         if image.dtype != np.uint8 or image.ndim != 3 or image.shape[2] != 3:
@@ -213,7 +228,7 @@ class BookVisionClient:
         header.config_hash = self.settings.config_hash
         header.calibration_version = self.settings.calibration_version
 
-        request.task = SCENE_TASK
+        request.task = str(task)
         request.expected_source = self.settings.expected_source
         request.expected_worker_id = self.settings.expected_worker_id
         request.expected_model_version = self.settings.expected_model_version
@@ -242,11 +257,61 @@ class BookVisionClient:
         base_motion_epoch,
         head_motion_epoch,
     ):
+        rows = self.detect_scene(
+            image_bgr,
+            captured_at_ns=captured_at_ns,
+            base_motion_epoch=base_motion_epoch,
+            head_motion_epoch=head_motion_epoch,
+            task=SCENE_TASK,
+            profile=SCENE_PROFILE,
+            semantic_classes=("book",),
+        )
+        return tuple(
+            BookMask(
+                confidence=row.confidence,
+                bbox=row.bbox,
+                rle_counts=row.rle_counts,
+                image_width=row.image_width,
+                image_height=row.image_height,
+            )
+            for row in rows
+        )
+
+    def detect_cart(
+        self,
+        image_bgr,
+        *,
+        captured_at_ns,
+        base_motion_epoch,
+        head_motion_epoch,
+    ):
+        return self.detect_scene(
+            image_bgr,
+            captured_at_ns=captured_at_ns,
+            base_motion_epoch=base_motion_epoch,
+            head_motion_epoch=head_motion_epoch,
+            task=CART_SCENE_TASK,
+            profile=CART_SCENE_PROFILE,
+            semantic_classes=CART_SCENE_CLASSES,
+        )
+
+    def detect_scene(
+        self,
+        image_bgr,
+        *,
+        captured_at_ns,
+        base_motion_epoch,
+        head_motion_epoch,
+        task,
+        profile,
+        semantic_classes,
+    ):
         request = self._make_request(
             image_bgr,
             captured_at_ns=captured_at_ns,
             base_motion_epoch=base_motion_epoch,
             head_motion_epoch=head_motion_epoch,
+            task=task,
         )
         remaining_s = (request.header.deadline_ns - self._clock_ns()) / 1_000_000_000
         if remaining_s <= 0:
@@ -255,19 +320,21 @@ class BookVisionClient:
             response = self._rpc(request, timeout=min(self.settings.timeout_s, remaining_s))
         except Exception as error:
             raise BookVisionError("book_vision_rpc_failed") from error
-        if getattr(response, "task", None) != SCENE_TASK:
+        if getattr(response, "task", None) != task:
             raise BookVisionError("book_vision_response_task_mismatch")
 
         result = []
         for row in getattr(response, "scene_instances", ()):
             if (
-                getattr(row, "semantic_class", None) != "book"
-                or getattr(row, "scene_profile_id", None) != SCENE_PROFILE
+                getattr(row, "semantic_class", None) not in semantic_classes
+                or getattr(row, "scene_profile_id", None) != profile
             ):
                 continue
             bbox = row.bbox_px
             result.append(
-                BookMask(
+                SceneMask(
+                    semantic_class=str(row.semantic_class),
+                    scene_profile_id=str(row.scene_profile_id),
                     confidence=float(row.confidence),
                     bbox=(
                         int(bbox.x),

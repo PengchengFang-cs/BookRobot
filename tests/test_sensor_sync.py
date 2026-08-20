@@ -6,6 +6,7 @@ from sensor_sync import (
     SensorSynchronizer,
     TimedJointValue,
     TimedMessage,
+    collect_successful_results,
     select_joint_positions,
     select_rgbd_snapshot,
 )
@@ -26,6 +27,28 @@ def message(stamp_ns, *, frame="head_rgbd_color_optical_frame", width=1920, heig
 
 
 class SensorSyncTests(unittest.TestCase):
+    def test_retries_missed_results_until_three_successes(self):
+        responses = iter(([], ["a"], [], ["b"], ["c"]))
+
+        samples = collect_successful_results(
+            lambda: next(responses),
+            successful_samples=3,
+            maximum_attempts=5,
+        )
+
+        self.assertEqual(samples, (["a"], ["b"], ["c"]))
+
+    def test_returns_partial_results_when_attempts_are_exhausted(self):
+        responses = iter(([], ["a"], []))
+
+        samples = collect_successful_results(
+            lambda: next(responses),
+            successful_samples=2,
+            maximum_attempts=3,
+        )
+
+        self.assertEqual(samples, (["a"],))
+
     def test_spins_until_feedback_counter_advances(self):
         waiter = getattr(sensor_sync, "spin_until_counter_advances", None)
         self.assertIsNotNone(waiter)

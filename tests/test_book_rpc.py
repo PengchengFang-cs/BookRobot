@@ -124,6 +124,47 @@ class BookRpcTests(unittest.TestCase):
 
         self.assertEqual([item.confidence for item in result], [0.90, 0.70])
 
+    def test_cart_request_uses_registered_loading_profile(self):
+        calls = []
+
+        def rpc(request, timeout):
+            calls.append(request)
+            return SimpleNamespace(
+                task="scene_cart_loading_segmentation",
+                scene_instances=[
+                    _scene_row(
+                        semantic_class="cart_platform",
+                        profile="cart_loading_v1",
+                        confidence=0.87,
+                    ),
+                    _scene_row(
+                        semantic_class="cart_body",
+                        profile="cart_loading_v1",
+                        confidence=0.91,
+                    ),
+                ],
+            )
+
+        client = BookVisionClient(
+            self.settings(),
+            pb2_module=_FakePb2,
+            rpc=rpc,
+            clock_ns=lambda: 1_100_000_000,
+        )
+        result = client.detect_cart(
+            np.zeros((48, 64, 3), dtype=np.uint8),
+            captured_at_ns=1_000_000_000,
+            base_motion_epoch="base-1",
+            head_motion_epoch="head-1",
+        )
+
+        self.assertEqual(calls[0].task, "scene_cart_loading_segmentation")
+        self.assertEqual(
+            [item.semantic_class for item in result],
+            ["cart_body", "cart_platform"],
+        )
+        self.assertTrue(all(item.scene_profile_id == "cart_loading_v1" for item in result))
+
     def test_rejects_capture_after_its_absolute_deadline(self):
         client = BookVisionClient(
             self.settings(),
