@@ -26,7 +26,7 @@ from config import (
     VISION_WARMUP_S,
 )
 from geometry import apply_ros_transform, camera_point_to_base
-from sensor_sync import SensorSynchronizer
+from sensor_sync import SensorSynchronizer, spin_until_counter_advances
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,7 @@ class Vision:
         self.color_time = 0.0
         self.depth_time = 0.0
         self.joints = {}
+        self.body_feedback_sequence = 0
         self.sensor_sync = SensorSynchronizer()
         self.last_capture_ns = -1
         self.book_client = book_client or BookVisionClient.from_config()
@@ -59,7 +60,10 @@ class Vision:
         node.create_subscription(CameraInfo, CAMERA_INFO_TOPIC, self._info, rgbd_qos)
         node.create_subscription(JointState, JOINT_STATES_TOPIC, self._joints, sensor_qos)
         node.create_subscription(
-            JointState, BODY_JOINT_STATES_TOPIC, self._joints, sensor_qos
+            JointState,
+            BODY_JOINT_STATES_TOPIC,
+            self._body_joints,
+            sensor_qos,
         )
 
         # MoveIt 需要看到 body_joint 和双臂在同一条 JointState 消息中。
@@ -102,6 +106,21 @@ class Vision:
         for name, value in zip(message.name, message.position):
             if np.isfinite(value):
                 self.joints[name] = float(value)
+
+    def _body_joints(self, message):
+        self._joints(message)
+        if any(
+            name == "body_joint" and np.isfinite(value)
+            for name, value in zip(message.name, message.position)
+        ):
+            self.body_feedback_sequence += 1
+
+    def spin_until_fresh_body(self, spin_once, *, timeout_s=0.05):
+        return spin_until_counter_advances(
+            lambda: self.body_feedback_sequence,
+            spin_once,
+            timeout_s=timeout_s,
+        )
 
     def _publish_merged_joints(self):
         if not self.joints:

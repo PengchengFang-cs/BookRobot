@@ -26,6 +26,29 @@ class RgbdSnapshot:
     info: object
 
 
+def spin_until_counter_advances(
+    counter,
+    spin_once,
+    *,
+    timeout_s=0.05,
+    clock=None,
+):
+    """Process callbacks until one new feedback sample arrives or time expires."""
+
+    if clock is None:
+        import time
+
+        clock = time.monotonic
+    initial = int(counter())
+    deadline = float(clock()) + float(timeout_s)
+    while int(counter()) == initial:
+        remaining = deadline - float(clock())
+        if remaining <= 0.0:
+            return False
+        spin_once(remaining)
+    return True
+
+
 def message_stamp_ns(message):
     stamp = message.header.stamp
     return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)

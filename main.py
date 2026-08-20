@@ -110,7 +110,11 @@ def run_real(args):
                     navigator,
                     Stage1BookPickReplayer(
                         joint_positions=lambda: dict(vision.joints),
-                        spin_feedback=lambda: rclpy.spin_once(node, timeout_sec=0.05),
+                        spin_feedback=lambda: vision.spin_until_fresh_body(
+                            lambda timeout_s: rclpy.spin_once(
+                                node, timeout_sec=timeout_s
+                            )
+                        ),
                     ),
                     replay_reference,
                     say,

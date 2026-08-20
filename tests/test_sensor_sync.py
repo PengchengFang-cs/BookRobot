@@ -1,6 +1,7 @@
 import unittest
 from types import SimpleNamespace
 
+import sensor_sync
 from sensor_sync import (
     SensorSynchronizer,
     TimedJointValue,
@@ -25,6 +26,46 @@ def message(stamp_ns, *, frame="head_rgbd_color_optical_frame", width=1920, heig
 
 
 class SensorSyncTests(unittest.TestCase):
+    def test_spins_until_feedback_counter_advances(self):
+        waiter = getattr(sensor_sync, "spin_until_counter_advances", None)
+        self.assertIsNotNone(waiter)
+        state = {"counter": 4, "spins": 0, "now": 0.0}
+
+        def spin_once(_timeout_s):
+            state["spins"] += 1
+            state["now"] += 0.01
+            if state["spins"] == 3:
+                state["counter"] += 1
+
+        result = waiter(
+            lambda: state["counter"],
+            spin_once,
+            timeout_s=0.05,
+            clock=lambda: state["now"],
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(state["spins"], 3)
+
+    def test_feedback_counter_wait_is_bounded(self):
+        waiter = getattr(sensor_sync, "spin_until_counter_advances", None)
+        self.assertIsNotNone(waiter)
+        state = {"now": 0.0, "spins": 0}
+
+        def spin_once(timeout_s):
+            state["spins"] += 1
+            state["now"] += timeout_s
+
+        result = waiter(
+            lambda: 7,
+            spin_once,
+            timeout_s=0.05,
+            clock=lambda: state["now"],
+        )
+
+        self.assertFalse(result)
+        self.assertEqual(state["spins"], 1)
+
     def test_zero_camera_stamp_uses_ros_receive_time(self):
         sync = SensorSynchronizer(maximum_rgbd_skew_ns=5_000_000)
         received_ns = 7_000_000_000

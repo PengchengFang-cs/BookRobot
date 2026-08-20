@@ -82,8 +82,22 @@ class MainArgumentTests(unittest.TestCase):
             text,
         )
         self.assertIn(
-            "spin_feedback=lambda: rclpy.spin_once(node, timeout_sec=0.05)",
+            "spin_feedback=lambda: vision.spin_until_fresh_body(\n"
+            "                            lambda timeout_s: rclpy.spin_once(\n"
+            "                                node, timeout_sec=timeout_s\n"
+            "                            )\n"
+            "                        )",
             text,
+        )
+        vision_text = (
+            Path(__file__).resolve().parents[1] / "vision.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("self.body_feedback_sequence = 0", vision_text)
+        self.assertIn(
+            "BODY_JOINT_STATES_TOPIC,\n"
+            "            self._body_joints,\n"
+            "            sensor_qos,",
+            vision_text,
         )
 
     def test_book_modes_load_and_pass_the_replay_reference(self):
