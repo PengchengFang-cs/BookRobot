@@ -109,6 +109,11 @@ class _CartVision:
     def __init__(self, groups):
         self.groups = iter(groups)
         self.calls = []
+        self.head_poses = []
+
+    def set_head_pose(self, **kwargs):
+        self.head_poses.append(kwargs)
+        return True
 
     def find_cart_samples(self, **kwargs):
         self.calls.append(kwargs)
@@ -118,6 +123,11 @@ class _CartVision:
 class _CartNavigator:
     def __init__(self):
         self.targets = []
+        self.observation_torso = []
+
+    def set_observation_torso(self, torso_m):
+        self.observation_torso.append(torso_m)
+        return torso_m
 
     def align(self, target):
         self.targets.append(target)
@@ -495,6 +505,11 @@ class CartPlaceMissionTests(unittest.TestCase):
         )
 
         self.assertEqual(len(navigator.targets), 1)
+        self.assertEqual(navigator.observation_torso, [0.2])
+        self.assertEqual(
+            vision.head_poses,
+            [{"yaw_rad": 0.0, "pitch_rad": 0.25}],
+        )
         self.assertEqual(
             vision.calls,
             [

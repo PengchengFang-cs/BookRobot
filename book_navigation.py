@@ -175,6 +175,24 @@ class CartPlaceDockingNavigator:
     def __init__(self, runtime=None):
         self.runtime = runtime
 
+    def set_observation_torso(self, torso_m):
+        """Restore the recorded Place torso height before cart perception."""
+
+        if self.runtime is None:
+            self.runtime = load_navnav_runtime()
+        adapter = self.runtime.WandaRos2Adapter()
+        try:
+            adapter.preflight()
+            command = self.runtime.MappedMotionCommand(
+                self.runtime.WandaCommandKind.TORSO_POSITION,
+                float(torso_m),
+                "Z",
+            )
+            adapter.execute_command(command, precision_mode=True)
+            return float(adapter.current_torso_position())
+        finally:
+            adapter.stop()
+
     def align(self, target):
         if self.runtime is None:
             self.runtime = load_navnav_runtime()

@@ -384,6 +384,19 @@ def run_cart_place_alignment_once(
 ):
     """Repeatedly match live shelf geometry to Place-2.4 frame zero."""
 
+    torso_actual_m = navigator.set_observation_torso(
+        replay_reference.recorded_torso_m
+    )
+    vision.set_head_pose(
+        yaw_rad=replay_reference.recorded_head_rad[0],
+        pitch_rad=replay_reference.recorded_head_rad[1],
+    )
+    say(
+        "Place 感知姿态已恢复: "
+        f"torso={torso_actual_m:.3f} m, "
+        f"head_pitch={replay_reference.recorded_head_rad[1]:.3f} rad"
+    )
+
     first = None
     last_navigation = None
     for correction_index in range(CART_PLACE_MAXIMUM_CORRECTIONS + 1):

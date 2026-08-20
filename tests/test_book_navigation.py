@@ -67,6 +67,7 @@ class _Runtime:
         SPIN = "spin"
         DRIVE_FORWARD = "forward"
         DRIVE_BACKWARD = "backward"
+        TORSO_POSITION = "torso"
 
     def __init__(
         self,
@@ -108,6 +109,19 @@ class _Runtime:
 
 
 class BookNavigationTests(unittest.TestCase):
+    def test_cart_place_restores_recorded_torso_before_observation(self):
+        runtime = _Runtime([], torso=0.2)
+
+        actual = CartPlaceDockingNavigator(runtime).set_observation_torso(0.2)
+
+        command, precision_mode = runtime.adapter.executed[0]
+        self.assertEqual(command.kind, runtime.WandaCommandKind.TORSO_POSITION)
+        self.assertEqual(command.axis, "Z")
+        self.assertAlmostEqual(command.value, 0.2)
+        self.assertTrue(precision_mode)
+        self.assertAlmostEqual(actual, 0.2)
+        self.assertTrue(runtime.adapter.stopped)
+
     def test_table_return_scans_rightmost_book_and_runs_inverse_grid_route(self):
         runtime = _Runtime([], absolute_yaw=0.2)
         books = (
