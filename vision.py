@@ -39,6 +39,10 @@ from sensor_sync import (
 )
 
 
+VISION_CAPTURE_ATTEMPTS = 3
+VISION_MODEL_ATTEMPTS_PER_CAPTURE = 3
+
+
 @dataclass(frozen=True)
 class LocatedBook:
     observation: object
@@ -483,52 +487,67 @@ class Vision:
             debug_path = self.debug_path.with_name(
                 f"cart_scan_{frame.scan_angle_deg:03d}.jpg"
             )
-            try:
-                return self._detect_cart_once(
-                    frame.snapshot,
-                    frame.joints,
-                    rpc_captured_at_ns=time.time_ns(),
-                    debug_path=debug_path,
-                )
-            except Exception as error:
-                cause = getattr(error, "__cause__", None)
-                detail = f"; cause={cause}" if cause is not None else ""
-                self.node.get_logger().warning(
-                    f"小推车检测帧失败: {error}{detail}"
-                )
-                print(
-                    "[视觉] 小推车检测帧失败: "
-                    f"{type(error).__name__}: {error}{detail}"
-                )
-                return None
+            for _attempt in range(VISION_MODEL_ATTEMPTS_PER_CAPTURE):
+                try:
+                    result = self._detect_cart_once(
+                        frame.snapshot,
+                        frame.joints,
+                        rpc_captured_at_ns=time.time_ns(),
+                        debug_path=debug_path,
+                    )
+                    if result is not None:
+                        return result
+                except Exception as error:
+                    cause = getattr(error, "__cause__", None)
+                    detail = f"; cause={cause}" if cause is not None else ""
+                    self.node.get_logger().warning(
+                        f"小推车检测帧失败: {error}{detail}"
+                    )
+                    print(
+                        "[视觉] 小推车检测帧失败: "
+                        f"{type(error).__name__}: {error}{detail}"
+                    )
+            return None
 
         return tuple(detect(frame) for frame in frames)
 
     def find_cart(self):
         """Return one cart-loading observation without any robot motion."""
 
-        started = time.monotonic()
-        deadline = started + VISION_TIMEOUT_S
         needed_joints = ("body_joint", "joint_head0", "joint_head1")
-        while rclpy.ok() and time.monotonic() < deadline:
-            rclpy.spin_once(self.node, timeout_sec=0.10)
-            selected = self.sensor_sync.select(
-                arrived_after_s=started,
-                captured_after_ns=self.last_capture_ns,
-                required_joints=needed_joints,
-            )
+        for _capture_attempt in range(VISION_CAPTURE_ATTEMPTS):
+            started = time.monotonic()
+            deadline = started + VISION_TIMEOUT_S
+            selected = None
+            while rclpy.ok() and time.monotonic() < deadline:
+                rclpy.spin_once(self.node, timeout_sec=0.10)
+                selected = self.sensor_sync.select(
+                    arrived_after_s=started,
+                    captured_after_ns=self.last_capture_ns,
+                    required_joints=needed_joints,
+                )
+                if selected is not None:
+                    break
             if selected is None:
                 continue
             snapshot, joints = selected
             self.last_capture_ns = snapshot.captured_at_ns
-            try:
-                result = self._detect_cart_once(snapshot, joints)
-                if result is not None:
-                    return result
-                print("[视觉] 当前帧没有检测到可用的小推车整体深度点")
-            except Exception as error:
-                self.node.get_logger().warning(f"小推车检测帧不能用: {error}")
-                print(f"[视觉] 小推车检测帧不能用: {type(error).__name__}: {error}")
+            for _model_attempt in range(VISION_MODEL_ATTEMPTS_PER_CAPTURE):
+                try:
+                    result = self._detect_cart_once(
+                        snapshot,
+                        joints,
+                        rpc_captured_at_ns=time.time_ns(),
+                    )
+                    if result is not None and result.platform is not None:
+                        return result
+                    print("[视觉] 当前帧没有检测到可用的小推车托板")
+                except Exception as error:
+                    self.node.get_logger().warning(f"小推车检测帧不能用: {error}")
+                    print(
+                        "[视觉] 小推车检测帧不能用: "
+                        f"{type(error).__name__}: {error}"
+                    )
         return None
 
     def find_cart_samples(self, *, successful_samples=1, maximum_attempts=1):
@@ -559,58 +578,65 @@ class Vision:
     def find(self, target="book", frame="map"):
         if target != "book":
             raise ValueError(f"当前视觉只支持书本，不支持: {target}")
-        started = time.monotonic()
-        deadline = started + VISION_TIMEOUT_S
         needed_joints = ("body_joint", "joint_head0", "joint_head1")
-        while rclpy.ok() and time.monotonic() < deadline:
-            rclpy.spin_once(self.node, timeout_sec=0.10)
-            selected = self.sensor_sync.select(
-                arrived_after_s=started,
-                captured_after_ns=self.last_capture_ns,
-                required_joints=needed_joints,
-            )
+        for _capture_attempt in range(VISION_CAPTURE_ATTEMPTS):
+            started = time.monotonic()
+            deadline = started + VISION_TIMEOUT_S
+            selected = None
+            while rclpy.ok() and time.monotonic() < deadline:
+                rclpy.spin_once(self.node, timeout_sec=0.10)
+                selected = self.sensor_sync.select(
+                    arrived_after_s=started,
+                    captured_after_ns=self.last_capture_ns,
+                    required_joints=needed_joints,
+                )
+                if selected is not None:
+                    break
             if selected is None:
                 continue
             snapshot, joints = selected
             # Consume before the RPC so a no-book result waits for a new frame
             # instead of repeatedly sending the identical capture.
             self.last_capture_ns = snapshot.captured_at_ns
-            try:
-                detected = self._detect_once(snapshot, joints)
-                if detected is None:
-                    print("[视觉] 当前帧没有可用的书本几何")
-                    continue
-                books, captured_at_ns = detected
-                transform = None
-                if frame == "map":
-                    tf = self.tf_buffer.lookup_transform(
-                        "map",
-                        "base_link",
-                        Time(nanoseconds=captured_at_ns),
-                    )
-                    transform = tf.transform
-                elif frame != "base_link":
-                    raise ValueError(f"不支持的坐标系: {frame}")
-                results = []
-                for index, book in enumerate(books, 1):
-                    point = book.geometry.suction_point
-                    if transform is not None:
-                        point = apply_ros_transform(point, transform)
-                    located = LocatedBook(
-                        observation=book.observation,
-                        geometry=book.geometry,
-                        frame_id=frame,
-                        suction_point=tuple(float(value) for value in point),
-                    )
-                    results.append(located)
+            for _model_attempt in range(VISION_MODEL_ATTEMPTS_PER_CAPTURE):
+                try:
+                    detected = self._detect_once(snapshot, joints)
+                    if detected is None:
+                        print("[视觉] 当前帧没有可用的书本几何")
+                        continue
+                    books, captured_at_ns = detected
+                    transform = None
+                    if frame == "map":
+                        tf = self.tf_buffer.lookup_transform(
+                            "map",
+                            "base_link",
+                            Time(nanoseconds=captured_at_ns),
+                        )
+                        transform = tf.transform
+                    elif frame != "base_link":
+                        raise ValueError(f"不支持的坐标系: {frame}")
+                    results = []
+                    for index, book in enumerate(books, 1):
+                        point = book.geometry.suction_point
+                        if transform is not None:
+                            point = apply_ros_transform(point, transform)
+                        located = LocatedBook(
+                            observation=book.observation,
+                            geometry=book.geometry,
+                            frame_id=frame,
+                            suction_point=tuple(float(value) for value in point),
+                        )
+                        results.append(located)
+                        print(
+                            f"[视觉] book #{index} suction @ {frame}: "
+                            f"x={point[0]:.3f}, y={point[1]:.3f}, z={point[2]:.3f}"
+                        )
+                    return results
+                except Exception as error:
+                    self.node.get_logger().warning(f"这一帧不能用: {error}")
                     print(
-                        f"[视觉] book #{index} suction @ {frame}: "
-                        f"x={point[0]:.3f}, y={point[1]:.3f}, z={point[2]:.3f}"
+                        f"[视觉] 这一帧不能用: {type(error).__name__}: {error}"
                     )
-                return results
-            except Exception as error:
-                self.node.get_logger().warning(f"这一帧不能用: {error}")
-                print(f"[视觉] 这一帧不能用: {type(error).__name__}: {error}")
         print(
             "[视觉] 检测超时，缓存数量: "
             f"color={len(self.sensor_sync.colors)}, "

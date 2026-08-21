@@ -76,15 +76,31 @@ class Stage1BookPlaceReplayer:
         self.runtime = runtime
         self.joint_positions = joint_positions
         self.spin_feedback = spin_feedback
+        self._prepared_episode = None
 
-    def place(self):
+    def preload(self):
+        if self._prepared_episode is not None:
+            return
         if self.runtime is None:
             self.runtime = load_legacy_v3_place_runtime(
                 joint_positions=self.joint_positions,
                 spin_feedback=self.spin_feedback,
             )
         try:
-            episode = self.runtime.load_episode()
+            self._prepared_episode = self.runtime.load_episode()
+        finally:
+            self.runtime.close()
+            self.runtime = None
+
+    def place(self):
+        self.preload()
+        self.runtime = load_legacy_v3_place_runtime(
+            joint_positions=self.joint_positions,
+            spin_feedback=self.spin_feedback,
+        )
+        self.runtime.initialize_module()
+        try:
+            episode = self._prepared_episode
             torso_target = float(episode.actions["target_qpos_torso"][0, 0])
             replay = self.runtime.replay_pick(episode)
             torso_actual = float(self.runtime.frame_zero_torso_actual_m)
@@ -99,6 +115,7 @@ class Stage1BookPlaceReplayer:
             )
         finally:
             self.runtime.close()
+            self.runtime = None
 
 
 def load_legacy_v3_place_runtime(

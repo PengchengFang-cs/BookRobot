@@ -18,6 +18,7 @@ CART_SCAN_STEP_RAD = math.radians(15.0)
 CART_SCAN_STEPS = 6
 CART_SCAN_CAPTURE_ANGLES_DEG = (30, 45, 60)
 TABLE_RETURN_SCAN_ANGLES_DEG = (30, 45, 60, 75)
+COARSE_TRANSLATION_SPEED_MPS = 0.5
 
 
 @dataclass(frozen=True)
@@ -267,6 +268,8 @@ class Stage1CartNavigator:
         if self.runtime is None:
             self.runtime = load_navnav_runtime()
         adapter = self.runtime.WandaRos2Adapter()
+        adapter._linear_speed = COARSE_TRANSLATION_SPEED_MPS
+        adapter._backup_speed = COARSE_TRANSLATION_SPEED_MPS
         return self._navigate_with_cart_scan(adapter)
 
     def _navigate_with_cart_scan(self, adapter):
@@ -283,7 +286,7 @@ class Stage1CartNavigator:
                     CART_TURN_CLEARANCE_RETREAT_M,
                     "XY",
                 )
-                adapter.execute_command(retreat, precision_mode=True)
+                adapter.execute_command(retreat, precision_mode=False)
                 commands_sent += 1
 
             for step in range(1, CART_SCAN_STEPS + 1):
@@ -293,7 +296,7 @@ class Stage1CartNavigator:
                     CART_SCAN_STEP_RAD,
                     "Y",
                 )
-                adapter.execute_command(turn, precision_mode=True)
+                adapter.execute_command(turn, precision_mode=False)
                 commands_sent += 1
                 pose = adapter.current_task_pose()
                 scan_angle_deg = step * 15
@@ -387,7 +390,7 @@ class Stage1CartNavigator:
                 lateral_kind,
                 abs(lateral_delta),
             ):
-                adapter.execute_command(command, precision_mode=True)
+                adapter.execute_command(command, precision_mode=False)
                 commands_sent += 1
 
             return_turn = self.runtime.MappedMotionCommand(
@@ -395,7 +398,7 @@ class Stage1CartNavigator:
                 -math.pi / 2.0,
                 "Y",
             )
-            adapter.execute_command(return_turn, precision_mode=True)
+            adapter.execute_command(return_turn, precision_mode=False)
             commands_sent += 1
 
             # The route started by backing exactly 20 cm away from the Pick
@@ -413,7 +416,7 @@ class Stage1CartNavigator:
                 self.runtime.WandaCommandKind.DRIVE_FORWARD,
                 forward_delta,
             ):
-                adapter.execute_command(command, precision_mode=True)
+                adapter.execute_command(command, precision_mode=False)
                 commands_sent += 1
 
             adapter.correct_absolute_imu_yaw(
@@ -469,6 +472,8 @@ class Stage1TableReturnNavigator:
         if self.runtime is None:
             self.runtime = load_navnav_runtime()
         adapter = self.runtime.WandaRos2Adapter()
+        adapter._linear_speed = COARSE_TRANSLATION_SPEED_MPS
+        adapter._backup_speed = COARSE_TRANSLATION_SPEED_MPS
         commands_sent = 0
         try:
             adapter.preflight()
@@ -489,7 +494,7 @@ class Stage1TableReturnNavigator:
                 )
             )
             for command in route:
-                adapter.execute_command(command, precision_mode=True)
+                adapter.execute_command(command, precision_mode=False)
                 commands_sent += 1
             kind = (
                 self.runtime.WandaCommandKind.DRIVE_FORWARD
@@ -497,7 +502,7 @@ class Stage1TableReturnNavigator:
                 else self.runtime.WandaCommandKind.DRIVE_BACKWARD
             )
             for command in _distance_commands(self.runtime, kind, abs(table_leg)):
-                adapter.execute_command(command, precision_mode=True)
+                adapter.execute_command(command, precision_mode=False)
                 commands_sent += 1
             finish = [
                 self.runtime.MappedMotionCommand(
@@ -513,7 +518,7 @@ class Stage1TableReturnNavigator:
                     )
                 )
             for command in finish:
-                adapter.execute_command(command, precision_mode=True)
+                adapter.execute_command(command, precision_mode=False)
                 commands_sent += 1
             adapter.correct_absolute_imu_yaw(
                 target_yaw_rad=starting_yaw,

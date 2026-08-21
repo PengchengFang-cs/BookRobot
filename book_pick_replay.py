@@ -248,10 +248,15 @@ class LegacyV3PickRuntime:
     def d01_state(self):
         return self._d01_state
 
-    def load_episode(self):
+    def initialize_module(self):
         module = self.replay_adapter._load_module()
         module._stop_service = _stop_service_without_sudo
         module._start_service_and_wait = _start_service_without_sudo
+        self.module = module
+        return module
+
+    def load_episode(self):
+        module = self.initialize_module()
         episode = module.HDF5EpisodeLoader.load(str(self.entry["file"]))
         if int(getattr(episode, "num_frames", -1)) != self.frame_count:
             raise RuntimeError(
@@ -289,7 +294,6 @@ class LegacyV3PickRuntime:
             if not np.isfinite(np.asarray(value, dtype=float)).all():
                 raise RuntimeError(f"{channel} contains non-finite values")
         actions.pop("target_qpos_right_dexhand", None)
-        self.module = module
         return episode
 
     def preposition_torso(self, target_m):
@@ -835,15 +839,28 @@ class Stage1BookPickReplayer:
         self.spin_feedback = spin_feedback
         self._prepared_episode = None
 
-    def prepare(self):
+    def preload(self):
+        if self._prepared_episode is not None:
+            return
         if self.runtime is None:
             self.runtime = load_legacy_v3_pick_runtime(
                 joint_positions=self.joint_positions,
                 spin_feedback=self.spin_feedback,
             )
-        episode = self.runtime.load_episode()
-        self.runtime.prepare_frame_zero(episode)
-        self._prepared_episode = episode
+        try:
+            self._prepared_episode = self.runtime.load_episode()
+        finally:
+            self.runtime.close()
+            self.runtime = None
+
+    def prepare(self):
+        self.preload()
+        self.runtime = load_legacy_v3_pick_runtime(
+            joint_positions=self.joint_positions,
+            spin_feedback=self.spin_feedback,
+        )
+        self.runtime.initialize_module()
+        self.runtime.prepare_frame_zero(self._prepared_episode)
 
     def pick(self, z_offset_m, *, check_holding=False):
         offset = _finite_offset(z_offset_m)
@@ -883,4 +900,4 @@ class Stage1BookPickReplayer:
             raise
         finally:
             self.runtime.close()
-            self._prepared_episode = None
+            self.runtime = None
