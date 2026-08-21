@@ -372,10 +372,16 @@ def _complete_cart_marker_points(
             ))
             if abs(distance - marker_width_m) <= distance_tolerance_m:
                 back_pairs.append((first_index, second_index))
-    if len(back_pairs) != 1:
+    if not back_pairs:
         _fail(f"cart_marker_back_pair_invalid:{len(back_pairs)}")
 
-    first_index, second_index = back_pairs[0]
+    first_index, second_index = min(
+        back_pairs,
+        key=lambda pair: (
+            markers[pair[0]]["center"][1]
+            + markers[pair[1]]["center"][1]
+        ) / 2.0,
+    )
     if markers[first_index]["center"][0] <= markers[second_index]["center"][0]:
         back_left = points[first_index]
         back_right = points[second_index]
