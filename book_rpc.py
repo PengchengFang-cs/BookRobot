@@ -8,6 +8,7 @@ import threading
 import time
 import uuid
 
+import cv2
 import numpy as np
 
 from book_geometry import BookMask
@@ -246,10 +247,17 @@ class BookVisionClient:
         color.camera_id = "head_rgbd"
         color.optical_frame_id = "head_rgbd_color_optical_frame"
         color.captured_at_ns = captured_at_ns
-        color.encoding = "bgr8"
+        encoded, jpeg = cv2.imencode(
+            ".jpg",
+            image,
+            (cv2.IMWRITE_JPEG_QUALITY, 85),
+        )
+        if not encoded:
+            raise BookVisionError("book_vision_jpeg_encode_failed")
+        color.encoding = "jpeg"
         color.width = int(image.shape[1])
         color.height = int(image.shape[0])
-        color.payload = image.tobytes()
+        color.payload = jpeg.tobytes()
         color.payload_sha256 = hashlib.sha256(color.payload).hexdigest()
         return request
 
