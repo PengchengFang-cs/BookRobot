@@ -442,9 +442,10 @@ class Stage1CartNavigator:
 class Stage1TableReturnNavigator:
     """Return from the cart to the table using the inverse right-angle route."""
 
-    def __init__(self, runtime=None, *, vision=None):
+    def __init__(self, runtime=None, *, vision=None, retreat_before_turn=True):
         self.runtime = runtime
         self.vision = vision
+        self.retreat_before_turn = bool(retreat_before_turn)
 
     def navigate(self):
         if self.vision is None:
@@ -473,15 +474,19 @@ class Stage1TableReturnNavigator:
             adapter.preflight()
             starting_yaw = adapter.current_absolute_imu_yaw()
             adapter.capture_task_origin()
-            route = (
-                self.runtime.MappedMotionCommand(
-                    self.runtime.WandaCommandKind.DRIVE_BACKWARD,
-                    CART_TURN_CLEARANCE_RETREAT_M,
-                    "XY",
-                ),
+            route = []
+            if self.retreat_before_turn:
+                route.append(
+                    self.runtime.MappedMotionCommand(
+                        self.runtime.WandaCommandKind.DRIVE_BACKWARD,
+                        CART_TURN_CLEARANCE_RETREAT_M,
+                        "XY",
+                    )
+                )
+            route.append(
                 self.runtime.MappedMotionCommand(
                     self.runtime.WandaCommandKind.SPIN, -math.pi / 2.0, "Y"
-                ),
+                )
             )
             for command in route:
                 adapter.execute_command(command, precision_mode=True)
@@ -494,16 +499,19 @@ class Stage1TableReturnNavigator:
             for command in _distance_commands(self.runtime, kind, abs(table_leg)):
                 adapter.execute_command(command, precision_mode=True)
                 commands_sent += 1
-            finish = (
+            finish = [
                 self.runtime.MappedMotionCommand(
                     self.runtime.WandaCommandKind.SPIN, math.pi / 2.0, "Y"
-                ),
-                self.runtime.MappedMotionCommand(
-                    self.runtime.WandaCommandKind.DRIVE_FORWARD,
-                    CART_TURN_CLEARANCE_RETREAT_M,
-                    "XY",
-                ),
-            )
+                )
+            ]
+            if self.retreat_before_turn:
+                finish.append(
+                    self.runtime.MappedMotionCommand(
+                        self.runtime.WandaCommandKind.DRIVE_FORWARD,
+                        CART_TURN_CLEARANCE_RETREAT_M,
+                        "XY",
+                    )
+                )
             for command in finish:
                 adapter.execute_command(command, precision_mode=True)
                 commands_sent += 1

@@ -241,6 +241,11 @@ def run_real(args):
                 place_reference = load_replay_place_reference(
                     REPLAY_PLACE_REFERENCE_PATH
                 )
+                say("扫描书本并沿直角路线到达第一轮抓书位置")
+                Stage1TableReturnNavigator(
+                    vision=vision,
+                    retreat_before_turn=False,
+                ).navigate()
                 for book_index in range(1, 4):
                     say(f"Stage 1 第 {book_index}/3 本")
                     run_book_pick_place_once(
