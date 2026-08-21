@@ -33,7 +33,6 @@ EXACT_ACTION_SHAPES = {
     "target_qpos_torso": (1,),
     "target_base_vel": (2,),
     "target_qpos_left_gripper": (1,),
-    "target_qpos_right_dexhand": (2,),
 }
 ARM_PREROLL_STEP_RAD = 0.01
 HEAD_PREROLL_STEP_RAD = 0.01
@@ -84,10 +83,7 @@ def build_frame_zero_preroll(joints, episode):
         "target_qpos_torso": interpolate(current_torso, target_torso),
         "target_base_vel": np.zeros((steps, 2), dtype=float),
     }
-    for channel in (
-        "target_qpos_left_gripper",
-        "target_qpos_right_dexhand",
-    ):
+    for channel in ("target_qpos_left_gripper",):
         if channel in episode.actions:
             target = np.asarray(episode.actions[channel][0], dtype=float)
             actions[channel] = np.repeat(target.reshape(1, -1), steps, axis=0)
@@ -234,7 +230,11 @@ class LegacyV3PickRuntime:
             }
         ])
         self.entry["allow_base_motion"] = True
-        required = list(self.entry.get("required_action_channels", ()))
+        required = [
+            channel
+            for channel in self.entry.get("required_action_channels", ())
+            if channel != "target_qpos_right_dexhand"
+        ]
         for channel in EXACT_ACTION_SHAPES:
             if channel not in required:
                 required.append(channel)
@@ -279,10 +279,7 @@ class LegacyV3PickRuntime:
         for channel, trailing_shape in EXACT_ACTION_SHAPES.items():
             value = actions.get(channel)
             expected = (self.frame_count, *trailing_shape)
-            if value is None and channel in (
-                "target_qpos_left_gripper",
-                "target_qpos_right_dexhand",
-            ):
+            if value is None and channel == "target_qpos_left_gripper":
                 continue
             if value is None or np.asarray(value).shape != expected:
                 actual = None if value is None else np.asarray(value).shape
@@ -291,6 +288,7 @@ class LegacyV3PickRuntime:
                 )
             if not np.isfinite(np.asarray(value, dtype=float)).all():
                 raise RuntimeError(f"{channel} contains non-finite values")
+        actions.pop("target_qpos_right_dexhand", None)
         self.module = module
         return episode
 
@@ -326,8 +324,6 @@ class LegacyV3PickRuntime:
         }
         if "target_qpos_left_gripper" in episode.actions:
             publishers["left_gripper"] = node.pub_gripper
-        if "target_qpos_right_dexhand" in episode.actions:
-            publishers["right_dexhand"] = node.pub_dexhand
         discovery_deadline = min(
             float(deadline),
             self.monotonic_clock() + CONTROLLER_DISCOVERY_TIMEOUT_S,
