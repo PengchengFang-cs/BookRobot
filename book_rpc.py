@@ -60,7 +60,7 @@ class BookVisionSettings:
     config_hash: str
     calibration_version: str
     protobuf_directory: str = ""
-    timeout_s: float = 3.0
+    timeout_s: float = 10.0
 
     def validate(self):
         required = (
@@ -77,7 +77,7 @@ class BookVisionSettings:
         if (
             not np.isfinite(self.timeout_s)
             or self.timeout_s <= 0
-            or self.timeout_s > 2.5
+            or self.timeout_s > 10.0
         ):
             raise BookVisionError("book_vision_timeout_invalid")
 
