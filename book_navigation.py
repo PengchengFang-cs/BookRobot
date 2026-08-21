@@ -16,6 +16,7 @@ CART_TURN_CLEARANCE_RETREAT_M = 0.20
 CART_ROUTE_MAX_SEGMENT_M = 0.20
 CART_SCAN_STEP_RAD = math.radians(15.0)
 CART_SCAN_STEPS = 6
+CART_SCAN_CAPTURE_ANGLES_DEG = (30, 45, 60)
 TABLE_RETURN_SCAN_ANGLES_DEG = (30, 45, 60, 75)
 
 
@@ -295,11 +296,13 @@ class Stage1CartNavigator:
                 adapter.execute_command(turn, precision_mode=True)
                 commands_sent += 1
                 pose = adapter.current_task_pose()
-                capture = self.vision.capture_cart_frame(
-                    scan_angle_deg=step * 15,
-                )
-                if capture is not None:
-                    captures.append((pose, capture))
+                scan_angle_deg = step * 15
+                if scan_angle_deg in CART_SCAN_CAPTURE_ANGLES_DEG:
+                    capture = self.vision.capture_cart_frame(
+                        scan_angle_deg=scan_angle_deg,
+                    )
+                    if capture is not None:
+                        captures.append((pose, capture))
 
             carts = self.vision.detect_cart_frames_queued(
                 capture for _pose, capture in captures

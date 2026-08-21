@@ -30,7 +30,6 @@ from config import (
     JOINT_STATES_TOPIC,
     MERGED_JOINT_STATES_TOPIC,
     VISION_TIMEOUT_S,
-    VISION_WARMUP_S,
 )
 from geometry import apply_ros_transform, camera_point_to_base
 from sensor_sync import (
@@ -484,29 +483,24 @@ class Vision:
             debug_path = self.debug_path.with_name(
                 f"cart_scan_{frame.scan_angle_deg:03d}.jpg"
             )
-            last_error = None
-            for attempt in range(1, 4):
-                try:
-                    return self._detect_cart_once(
-                        frame.snapshot,
-                        frame.joints,
-                        rpc_captured_at_ns=time.time_ns(),
-                        debug_path=debug_path,
-                    )
-                except Exception as error:
-                    last_error = error
-                    if attempt < 3:
-                        time.sleep(0.2 * attempt)
-            cause = getattr(last_error, "__cause__", None)
-            detail = f"; cause={cause}" if cause is not None else ""
-            self.node.get_logger().warning(
-                f"小推车并行检测帧三次失败: {last_error}{detail}"
-            )
-            print(
-                "[视觉] 小推车并行检测帧三次失败: "
-                f"{type(last_error).__name__}: {last_error}{detail}"
-            )
-            return None
+            try:
+                return self._detect_cart_once(
+                    frame.snapshot,
+                    frame.joints,
+                    rpc_captured_at_ns=time.time_ns(),
+                    debug_path=debug_path,
+                )
+            except Exception as error:
+                cause = getattr(error, "__cause__", None)
+                detail = f"; cause={cause}" if cause is not None else ""
+                self.node.get_logger().warning(
+                    f"小推车检测帧失败: {error}{detail}"
+                )
+                print(
+                    "[视觉] 小推车检测帧失败: "
+                    f"{type(error).__name__}: {error}{detail}"
+                )
+                return None
 
         return tuple(detect(frame) for frame in frames)
 
@@ -516,9 +510,6 @@ class Vision:
         started = time.monotonic()
         deadline = started + VISION_TIMEOUT_S
         needed_joints = ("body_joint", "joint_head0", "joint_head1")
-        warmup_deadline = min(deadline, started + VISION_WARMUP_S)
-        while rclpy.ok() and time.monotonic() < warmup_deadline:
-            rclpy.spin_once(self.node, timeout_sec=0.10)
         while rclpy.ok() and time.monotonic() < deadline:
             rclpy.spin_once(self.node, timeout_sec=0.10)
             selected = self.sensor_sync.select(
@@ -540,7 +531,7 @@ class Vision:
                 print(f"[视觉] 小推车检测帧不能用: {type(error).__name__}: {error}")
         return None
 
-    def find_cart_samples(self, *, successful_samples=1, maximum_attempts=3):
+    def find_cart_samples(self, *, successful_samples=1, maximum_attempts=1):
         """Return immediately on the first successful cart measurement."""
 
         def report(attempt, success_count, found):
@@ -571,9 +562,6 @@ class Vision:
         started = time.monotonic()
         deadline = started + VISION_TIMEOUT_S
         needed_joints = ("body_joint", "joint_head0", "joint_head1")
-        warmup_deadline = min(deadline, started + VISION_WARMUP_S)
-        while rclpy.ok() and time.monotonic() < warmup_deadline:
-            rclpy.spin_once(self.node, timeout_sec=0.10)
         while rclpy.ok() and time.monotonic() < deadline:
             rclpy.spin_once(self.node, timeout_sec=0.10)
             selected = self.sensor_sync.select(
@@ -637,7 +625,7 @@ class Vision:
         frame="map",
         *,
         successful_samples=1,
-        maximum_attempts=3,
+        maximum_attempts=1,
     ):
         """Collect distinct successful detections, retrying missed frames."""
 

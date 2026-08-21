@@ -32,7 +32,7 @@ class BookPlaceReplayResult:
 
 
 class LegacyV3PlaceRuntime(LegacyV3PickRuntime):
-    def replay_pick(self, episode):
+    def replay_pick(self, episode, *, restore_frame_zero=True):
         delegate = self.replay_adapter.delegate
         original = delegate.replay_start_check
         result_class = self.replay_adapter.__class__._publish_frames.__globals__.get(
@@ -48,7 +48,10 @@ class LegacyV3PlaceRuntime(LegacyV3PickRuntime):
 
         delegate.replay_start_check = accept_loaded_start
         try:
-            return super().replay_pick(episode)
+            return super().replay_pick(
+                episode,
+                restore_frame_zero=restore_frame_zero,
+            )
         finally:
             delegate.replay_start_check = original
 

@@ -63,7 +63,6 @@ DEPTH_PATCH_PX = 15
 MIN_DEPTH_M = 0.20
 MAX_DEPTH_M = 2.50
 VISION_TIMEOUT_S = 20.0
-VISION_WARMUP_S = 5.0
 
 # RTX 5090 上的固定桌面书本分割服务。机器人通过本机 SSH 转发访问它；
 # 模型只返回二维 bbox/mask，深度和三维坐标始终留在机器人本机。

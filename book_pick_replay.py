@@ -84,6 +84,13 @@ def build_frame_zero_preroll(joints, episode):
         "target_qpos_torso": interpolate(current_torso, target_torso),
         "target_base_vel": np.zeros((steps, 2), dtype=float),
     }
+    for channel in (
+        "target_qpos_left_gripper",
+        "target_qpos_right_dexhand",
+    ):
+        if channel in episode.actions:
+            target = np.asarray(episode.actions[channel][0], dtype=float)
+            actions[channel] = np.repeat(target.reshape(1, -1), steps, axis=0)
     return SimpleNamespace(
         num_frames=steps,
         timestamps=np.arange(steps, dtype=float) * PREROLL_PERIOD_S,
@@ -272,6 +279,11 @@ class LegacyV3PickRuntime:
         for channel, trailing_shape in EXACT_ACTION_SHAPES.items():
             value = actions.get(channel)
             expected = (self.frame_count, *trailing_shape)
+            if value is None and channel in (
+                "target_qpos_left_gripper",
+                "target_qpos_right_dexhand",
+            ):
+                continue
             if value is None or np.asarray(value).shape != expected:
                 actual = None if value is None else np.asarray(value).shape
                 raise RuntimeError(
@@ -305,14 +317,17 @@ class LegacyV3PickRuntime:
         target = float(episode.actions["target_qpos_torso"][0, 0])
         return self.preposition_torso(target)
 
-    def _wait_for_controller_subscribers(self, node, deadline):
+    def _wait_for_controller_subscribers(self, node, episode, deadline):
         publishers = {
             "arms": node.pub_arms,
-            "left_gripper": node.pub_gripper,
             "head": node.pub_head,
             "torso": node.pub_torso,
             "base": node.pub_base,
         }
+        if "target_qpos_left_gripper" in episode.actions:
+            publishers["left_gripper"] = node.pub_gripper
+        if "target_qpos_right_dexhand" in episode.actions:
+            publishers["right_dexhand"] = node.pub_dexhand
         discovery_deadline = min(
             float(deadline),
             self.monotonic_clock() + CONTROLLER_DISCOVERY_TIMEOUT_S,
@@ -360,8 +375,11 @@ class LegacyV3PickRuntime:
         context,
         deadline,
         before,
+        *,
+        restore_frame_zero=True,
     ):
-        self._restore_frame_zero(module, node, episode, deadline)
+        if restore_frame_zero:
+            self._restore_frame_zero(module, node, episode, deadline)
         return self._publish_recorded_frames(
             module,
             node,
@@ -375,7 +393,7 @@ class LegacyV3PickRuntime:
     def _restore_frame_zero(self, module, node, episode, deadline):
         if self.joint_positions is None:
             raise RuntimeError("frame-zero joint feedback provider is unavailable")
-        self._wait_for_controller_subscribers(node, deadline)
+        self._wait_for_controller_subscribers(node, episode, deadline)
         if not self.spin_feedback():
             raise RuntimeError("fresh body_joint feedback unavailable before pre-roll")
         preroll = build_frame_zero_preroll(self.joint_positions(), episode)
@@ -667,7 +685,7 @@ class LegacyV3PickRuntime:
         if response.get("ok") is not True or response.get("action") != "stop":
             raise RuntimeError("D01 stop command was not acknowledged")
 
-    def replay_pick(self, episode):
+    def replay_pick(self, episode, *, restore_frame_zero=True):
         if self.entry.get("allow_base_motion") is not True:
             raise RuntimeError(
                 f"{self.operation_label} must replay its recorded base motion"
@@ -709,6 +727,7 @@ class LegacyV3PickRuntime:
                 context,
                 end,
                 start,
+                restore_frame_zero=restore_frame_zero,
             )
 
         self.replay_adapter._publish_frames = exact_publish
@@ -818,6 +837,7 @@ class Stage1BookPickReplayer:
         self.runtime = runtime
         self.joint_positions = joint_positions
         self.spin_feedback = spin_feedback
+        self._prepared_episode = None
 
     def prepare(self):
         if self.runtime is None:
@@ -827,21 +847,22 @@ class Stage1BookPickReplayer:
             )
         episode = self.runtime.load_episode()
         self.runtime.prepare_frame_zero(episode)
+        self._prepared_episode = episode
 
     def pick(self, z_offset_m, *, check_holding=False):
         offset = _finite_offset(z_offset_m)
-        if self.runtime is None:
-            self.runtime = load_legacy_v3_pick_runtime(
-                joint_positions=self.joint_positions,
-                spin_feedback=self.spin_feedback,
-            )
+        if self.runtime is None or self._prepared_episode is None:
+            self.prepare()
         replay_started = False
         try:
-            episode = self.runtime.load_episode()
+            episode = self._prepared_episode
             shifted = shift_pick_episode_torso(episode, offset)
             torso_target = float(shifted.actions["target_qpos_torso"][0, 0])
             replay_started = True
-            replay = self.runtime.replay_pick(shifted)
+            replay = self.runtime.replay_pick(
+                shifted,
+                restore_frame_zero=False,
+            )
             torso_actual = float(self.runtime.frame_zero_torso_actual_m)
             holding = (
                 bool(self.runtime.confirm_holding())
@@ -866,3 +887,4 @@ class Stage1BookPickReplayer:
             raise
         finally:
             self.runtime.close()
+            self._prepared_episode = None
