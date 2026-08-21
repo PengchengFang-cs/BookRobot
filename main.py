@@ -241,8 +241,8 @@ def run_real(args):
                 place_reference = load_replay_place_reference(
                     REPLAY_PLACE_REFERENCE_PATH
                 )
-                for book_index in range(1, 6):
-                    say(f"Stage 1 第 {book_index}/5 本")
+                for book_index in range(1, 4):
+                    say(f"Stage 1 第 {book_index}/3 本")
                     run_book_pick_place_once(
                         vision,
                         BookAlignmentNavigator(mode=args.book_align_mode),
@@ -260,8 +260,8 @@ def run_real(args):
                         press_m=args.book_pick_press_mm / 1000.0,
                         say=say,
                     )
-                    if book_index < 5:
-                        say("扫描右侧书桌并沿直角路线返回下一轮抓书位置")
+                    if book_index < 3:
+                        say("扫描书本并沿直角路线返回下一轮抓书位置")
                         Stage1TableReturnNavigator(vision=vision).navigate()
             elif args.book_place:
                 from book_place_replay import Stage1BookPlaceReplayer

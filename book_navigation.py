@@ -453,8 +453,14 @@ class Stage1TableReturnNavigator:
             self.vision.scan_books_to_robot_right(TABLE_RETURN_SCAN_ANGLES_DEG)
         )
         if not books:
-            raise RuntimeError("30/45/60/75度扫描没有找到书桌上的书")
-        selected = min(books, key=lambda book: float(book.suction_point[1]))
+            raise RuntimeError("30/45/60/75度扫描没有找到书本")
+        selected = max(
+            books,
+            key=lambda book: math.hypot(
+                float(book.suction_point[0]),
+                float(book.suction_point[1]),
+            ),
+        )
         point = tuple(float(value) for value in selected.suction_point)
         from book_alignment import COARSE_APPROACH_REFERENCE_BASE_M
 
