@@ -31,7 +31,13 @@ def _front_slot_anchor(front_edge, lateral_axis, slot_center):
     return front + lateral * float(np.dot(slot - front, lateral))
 
 
-def build_cart_place_alignment_target(*, platform, replay_reference, slot_index):
+def build_cart_place_alignment_target(
+    *,
+    platform,
+    replay_reference,
+    slot_index,
+    observed_cart_bbox_width_ratio,
+):
     """Match live shelf front distance and selected slot to replay frame zero."""
 
     slot_index = int(slot_index)
@@ -58,6 +64,14 @@ def build_cart_place_alignment_target(*, platform, replay_reference, slot_index)
         platform.lateral_axis_right_to_left,
         platform.slot_centers[slot_index - 1],
     )
+    observed_width_ratio = float(observed_cart_bbox_width_ratio)
+    reference_width_ratio = float(
+        replay_reference.recorded_cart_bbox_width_ratio
+    )
+    image_forward_residual = float(reference_anchor[0]) * (
+        reference_width_ratio / observed_width_ratio - 1.0
+    )
+    observed_anchor[0] = reference_anchor[0] + image_forward_residual
     residual = observed_anchor - reference_anchor
     yaw_error = _normalize_yaw(
         _yaw(platform.forward_axis)

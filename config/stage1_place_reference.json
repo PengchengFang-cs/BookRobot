@@ -34,5 +34,6 @@
   ],
   "platform_width_m": 0.7665037780734605,
   "platform_depth_m": 0.3733149927109766,
-  "recorded_book_offset_from_left_m": 0.17
+  "recorded_book_offset_from_left_m": 0.17,
+  "recorded_cart_bbox_width_ratio": 0.5357142857142857
 }
