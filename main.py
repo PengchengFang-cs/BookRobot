@@ -73,6 +73,11 @@ def arguments():
         action="store_true",
         help="连续完成五本书的抓取、放置与返回书桌粗导航",
     )
+    parser.add_argument(
+        "--skip-stage1-initial-coarse",
+        action="store_true",
+        help="Stage-1 从已对准的书桌正面直接开始精细对位",
+    )
     operation.add_argument(
         "--cart-perception",
         action="store_true",
@@ -241,11 +246,12 @@ def run_real(args):
                 place_reference = load_replay_place_reference(
                     REPLAY_PLACE_REFERENCE_PATH
                 )
-                say("扫描书本并沿直角路线到达第一轮抓书位置")
-                Stage1TableReturnNavigator(
-                    vision=vision,
-                    retreat_before_turn=False,
-                ).navigate()
+                if not args.skip_stage1_initial_coarse:
+                    say("扫描书本并沿直角路线到达第一轮抓书位置")
+                    Stage1TableReturnNavigator(
+                        vision=vision,
+                        retreat_before_turn=False,
+                    ).navigate()
                 for book_index in range(1, 6):
                     say(f"Stage 1 第 {book_index}/5 本")
                     run_book_pick_place_once(
