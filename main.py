@@ -247,6 +247,8 @@ def run_real(args):
                     REPLAY_PLACE_REFERENCE_PATH
                 )
                 if not args.skip_stage1_initial_coarse:
+                    CartPlaceDockingNavigator().set_observation_torso(0.20)
+                    vision.set_head_pose(yaw_rad=0.0, pitch_rad=0.25)
                     say("扫描书本并沿直角路线到达第一轮抓书位置")
                     Stage1TableReturnNavigator(
                         vision=vision,
