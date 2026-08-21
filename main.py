@@ -252,8 +252,8 @@ def run_real(args):
                         vision=vision,
                         retreat_before_turn=False,
                     ).navigate()
-                for book_index in range(1, 6):
-                    say(f"Stage 1 第 {book_index}/5 本")
+                for book_index in range(1, 4):
+                    say(f"Stage 1 第 {book_index}/3 本")
                     run_book_pick_place_once(
                         vision,
                         BookAlignmentNavigator(mode=args.book_align_mode),
@@ -271,7 +271,7 @@ def run_real(args):
                         press_m=args.book_pick_press_mm / 1000.0,
                         say=say,
                     )
-                    if book_index < 5:
+                    if book_index < 3:
                         say("扫描书本并沿直角路线返回下一轮抓书位置")
                         Stage1TableReturnNavigator(vision=vision).navigate()
             elif args.book_place:
