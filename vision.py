@@ -507,11 +507,11 @@ class Vision:
 
         return tuple(detect(frame) for frame in frames)
 
-    def find_cart(self):
+    def find_cart(self, *, maximum_captures=1):
         """Return one cart-loading observation without any robot motion."""
 
         needed_joints = ("body_joint", "joint_head0", "joint_head1")
-        for _capture_attempt in range(CART_PLACE_CAPTURE_ATTEMPTS):
+        for _capture_attempt in range(int(maximum_captures)):
             started = time.monotonic()
             deadline = started + VISION_TIMEOUT_S
             selected = None
@@ -556,7 +556,9 @@ class Vision:
                 )
 
         def find_usable_platform():
-            result = self.find_cart()
+            result = self.find_cart(
+                maximum_captures=CART_PLACE_CAPTURE_ATTEMPTS,
+            )
             return result if result is not None and result.platform is not None else None
 
         return collect_successful_results(
