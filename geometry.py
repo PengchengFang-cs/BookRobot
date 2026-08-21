@@ -67,6 +67,28 @@ def camera_point_to_base(point_camera, body_m, head_yaw, head_pitch):
     return _matrix_point(base_to_camera, [*point_camera, 1.0])[:3]
 
 
+def base_point_to_camera(point_base, body_m, head_yaw, head_pitch):
+    """把 base_link 中的 XYZ 换回相机光学坐标中的 XYZ。"""
+    tiny_base_yaw = -0.00001283
+    base_to_body = _transform(
+        _rotation_z(tiny_base_yaw), (0.0, -0.000025184, 0.985 + body_m)
+    )
+    body_to_head0 = _transform(_rotation_z(head_yaw), (-0.00999, 0.0, 0.2215))
+    head0_to_head1 = _transform(_rotation_y(head_pitch), (0.0, 0.0, 0.05345))
+    base_to_camera = _matrix_multiply(base_to_body, body_to_head0)
+    base_to_camera = _matrix_multiply(base_to_camera, head0_to_head1)
+    base_to_camera = _matrix_multiply(base_to_camera, T_LINK_HEAD1_CAMERA)
+
+    translated = [
+        float(point_base[row]) - base_to_camera[row][3]
+        for row in range(3)
+    ]
+    return [
+        sum(base_to_camera[row][column] * translated[row] for row in range(3))
+        for column in range(3)
+    ]
+
+
 def quaternion_from_yaw(yaw):
     return (0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
 

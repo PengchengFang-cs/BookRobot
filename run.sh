@@ -27,7 +27,23 @@ if [[ " $* " == *" --book-align "* || \
       " $* " == *" --cart-scan-navigation "* || \
       " $* " == *" --cart-approach-navigation "* ]]; then
   source "$DIR/scripts/book_vision_env.sh"
-  exec python3 "$DIR/main.py" "$@"
+  RUN_ID="${FPC_EXPERIMENT_RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
+  export FPC_EXPERIMENT_RECORD_DIR="$DIR/logs/record_rebot/$RUN_ID"
+  mkdir -p "$FPC_EXPERIMENT_RECORD_DIR"
+  printf 'run_id=%s\nstarted_at=%s\ncommand=%q' \
+    "$RUN_ID" "$(date --iso-8601=seconds)" "$DIR/main.py" \
+    >"$FPC_EXPERIMENT_RECORD_DIR/run.txt"
+  printf ' %q' "$@" >>"$FPC_EXPERIMENT_RECORD_DIR/run.txt"
+  printf '\n' >>"$FPC_EXPERIMENT_RECORD_DIR/run.txt"
+  set +e
+  python3 "$DIR/main.py" "$@" 2>&1 | \
+    tee "$FPC_EXPERIMENT_RECORD_DIR/experiment.log"
+  STATUS=${PIPESTATUS[0]}
+  set -e
+  printf 'finished_at=%s\nexit_code=%s\n' \
+    "$(date --iso-8601=seconds)" "$STATUS" \
+    >>"$FPC_EXPERIMENT_RECORD_DIR/run.txt"
+  exit "$STATUS"
 fi
 
 if [[ ! -x "$DIR/ros_overlay/opt/ros/humble/lib/moveit_ros_move_group/move_group" ]]; then

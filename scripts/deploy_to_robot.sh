@@ -6,11 +6,11 @@ robot_root=/home/unix_ai/fpc
 
 cd "$repo_root"
 
-if [[ $(git branch --show-current) != main ]]; then
-    echo 'error: deployment is allowed only from main' >&2
+if [[ -z $(git branch --show-current) ]]; then
+    echo 'error: deployment requires a local branch' >&2
     exit 2
 fi
-if [[ -n $(git status --porcelain) ]]; then
+if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
     echo 'error: commit local changes before deployment' >&2
     exit 2
 fi

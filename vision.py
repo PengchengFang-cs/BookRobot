@@ -1,6 +1,7 @@
 """视觉积木：5090 分割书本，机器人本地用深度计算吸取点。"""
 
 from dataclasses import dataclass
+import os
 import time
 from pathlib import Path
 
@@ -31,7 +32,7 @@ from config import (
     MERGED_JOINT_STATES_TOPIC,
     VISION_TIMEOUT_S,
 )
-from geometry import apply_ros_transform, camera_point_to_base
+from geometry import apply_ros_transform, base_point_to_camera, camera_point_to_base
 from sensor_sync import (
     SensorSynchronizer,
     collect_successful_results,
@@ -109,6 +110,32 @@ class Vision:
         self.debug_path = Path(__file__).resolve().parent / "logs" / "last_detection.jpg"
         self.debug_path.parent.mkdir(parents=True, exist_ok=True)
         self.debug_path.unlink(missing_ok=True)
+        record_dir = os.environ.get("FPC_EXPERIMENT_RECORD_DIR")
+        self.record_dir = Path(record_dir) if record_dir else None
+        self.record_image_index = 0
+
+    def _record_path(self, label):
+        if self.record_dir is None:
+            return None
+        self.record_dir.mkdir(parents=True, exist_ok=True)
+        self.record_image_index += 1
+        return self.record_dir / f"{self.record_image_index:03d}_{label}.jpg"
+
+    def _save_record_image(self, label, image):
+        path = self._record_path(label)
+        if path is not None:
+            cv2.imwrite(str(path), image)
+        return path
+
+    @staticmethod
+    def _project_base_point(point, *, body, head_yaw, head_pitch, intrinsics):
+        camera = base_point_to_camera(point, body, head_yaw, head_pitch)
+        if not np.all(np.isfinite(camera)) or camera[2] <= 0.0:
+            return None
+        return (
+            int(round(intrinsics.fx * camera[0] / camera[2] + intrinsics.cx)),
+            int(round(intrinsics.fy * camera[1] / camera[2] + intrinsics.cy)),
+        )
 
     def _color(self, message):
         self.color = message
@@ -210,7 +237,7 @@ class Vision:
             self.set_head_pose(yaw_rad=0.0)
         return tuple(books)
 
-    def _save_debug_overlay(self, color, books):
+    def _save_debug_overlay(self, color, books, project):
         overlay = color.copy()
         colors = (
             (0, 220, 0),
@@ -237,6 +264,25 @@ class Vision:
                 color, (x, y), (x + width, y + height), draw_color, 3
             )
             point = geometry.suction_point
+            suction_pixel = project(point)
+            if suction_pixel is not None:
+                cv2.drawMarker(
+                    color,
+                    suction_pixel,
+                    (0, 0, 255),
+                    cv2.MARKER_CROSS,
+                    28,
+                    4,
+                )
+                cv2.putText(
+                    color,
+                    f"grasp #{index + 1}",
+                    (suction_pixel[0] + 12, suction_pixel[1] - 12),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.62,
+                    (0, 0, 255),
+                    2,
+                )
             cv2.putText(
                 color,
                 (
@@ -250,6 +296,7 @@ class Vision:
                 2,
             )
         cv2.imwrite(str(self.debug_path), color)
+        self._save_record_image("book_overlay", color)
 
     def _detect_once(self, snapshot, joints):
         color, depth = self._snapshot_arrays(snapshot)
@@ -260,17 +307,20 @@ class Vision:
         head_yaw = joints["joint_head0"]
         head_pitch = joints["joint_head1"]
         captured_at_ns = snapshot.captured_at_ns
+        self._save_record_image("book_raw", color)
+
+        intrinsics = CameraIntrinsics(
+            fx=float(snapshot.info.k[0]),
+            fy=float(snapshot.info.k[4]),
+            cx=float(snapshot.info.k[2]),
+            cy=float(snapshot.info.k[5]),
+        )
 
         books = detect_book_frame(
             book_client=self.book_client,
             color_bgr=color,
             depth_m=depth,
-            intrinsics=CameraIntrinsics(
-                fx=float(snapshot.info.k[0]),
-                fy=float(snapshot.info.k[4]),
-                cx=float(snapshot.info.k[2]),
-                cy=float(snapshot.info.k[5]),
-            ),
+            intrinsics=intrinsics,
             camera_to_base=lambda point: camera_point_to_base(
                 point, body, head_yaw, head_pitch
             ),
@@ -280,7 +330,17 @@ class Vision:
         )
         if not books:
             return None
-        self._save_debug_overlay(color, books)
+        self._save_debug_overlay(
+            color,
+            books,
+            lambda point: self._project_base_point(
+                point,
+                body=body,
+                head_yaw=head_yaw,
+                head_pitch=head_pitch,
+                intrinsics=intrinsics,
+            ),
+        )
         return books, captured_at_ns
 
     def _snapshot_arrays(self, snapshot):
@@ -300,6 +360,8 @@ class Vision:
         *,
         rpc_captured_at_ns=None,
         debug_path=None,
+        record_label="cart",
+        record_raw=True,
     ):
         color, depth = self._snapshot_arrays(snapshot)
         if color is None:
@@ -308,6 +370,14 @@ class Vision:
         head_yaw = joints["joint_head0"]
         head_pitch = joints["joint_head1"]
         captured_at_ns = snapshot.captured_at_ns
+        if record_raw:
+            self._save_record_image(f"{record_label}_raw", color)
+        intrinsics = CameraIntrinsics(
+            fx=float(snapshot.info.k[0]),
+            fy=float(snapshot.info.k[4]),
+            cx=float(snapshot.info.k[2]),
+            cy=float(snapshot.info.k[5]),
+        )
         rpc_captured_at_ns = (
             time.time_ns()
             if rpc_captured_at_ns is None
@@ -328,12 +398,7 @@ class Vision:
                 geometry_args = dict(
                     observation=observation,
                     depth_m=depth,
-                    intrinsics=CameraIntrinsics(
-                        fx=float(snapshot.info.k[0]),
-                        fy=float(snapshot.info.k[4]),
-                        cx=float(snapshot.info.k[2]),
-                        cy=float(snapshot.info.k[5]),
-                    ),
+                    intrinsics=intrinsics,
                     camera_to_base=lambda point: camera_point_to_base(
                         point, body, head_yaw, head_pitch
                     ),
@@ -356,12 +421,40 @@ class Vision:
             else None
         )
         platform = select_leftmost_cart_platform(platform_candidates)
+        if body_target is not None:
+            print(
+                "[视觉] 推车粗导航点 @ base_link: "
+                f"x={body_target.center[0]:.3f}, "
+                f"y={body_target.center[1]:.3f}, "
+                f"z={body_target.center[2]:.3f} m"
+            )
+        if platform is not None:
+            slots = ", ".join(
+                f"#{index}=({point[0]:.3f},{point[1]:.3f},{point[2]:.3f})"
+                for index, point in enumerate(platform.slot_centers, 1)
+            )
+            print(
+                "[视觉] 推车平台 @ base_link: "
+                f"center=({platform.center[0]:.3f},"
+                f"{platform.center[1]:.3f},{platform.center[2]:.3f}) m; "
+                f"front=({platform.front_edge[0]:.3f},"
+                f"{platform.front_edge[1]:.3f},{platform.front_edge[2]:.3f}) m; "
+                f"slots={slots}"
+            )
         debug_path = self._save_cart_debug_overlay(
             color,
             observations,
             body_target,
             platform,
             debug_path=debug_path,
+            record_label=record_label,
+            project=lambda point: self._project_base_point(
+                point,
+                body=body,
+                head_yaw=head_yaw,
+                head_pitch=head_pitch,
+                intrinsics=intrinsics,
+            ),
         )
         return LocatedCart(
             observations=tuple(observations),
@@ -380,6 +473,8 @@ class Vision:
         platform,
         *,
         debug_path=None,
+        record_label="cart",
+        project=None,
     ):
         overlay = color.copy()
         for observation in observations:
@@ -410,7 +505,12 @@ class Vision:
             cv2.circle(color, body_target.center_pixel, 12, (0, 0, 255), -1)
             cv2.putText(
                 color,
-                "cart navigation target",
+                (
+                    "cart target "
+                    f"({body_target.center[0]:.2f},"
+                    f"{body_target.center[1]:.2f},"
+                    f"{body_target.center[2]:.2f})m"
+                ),
                 (body_target.center_pixel[0] + 14, body_target.center_pixel[1] - 12),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.65,
@@ -418,15 +518,42 @@ class Vision:
                 2,
             )
         if platform is not None:
-            if platform.outline_pixels:
+            outline_pixels = platform.outline_pixels
+            slot_pixels = platform.slot_pixels
+            if project is not None and not outline_pixels:
+                center = np.asarray(platform.center, dtype=float)
+                forward = np.asarray(platform.forward_axis, dtype=float)
+                lateral = np.asarray(
+                    platform.lateral_axis_right_to_left,
+                    dtype=float,
+                )
+                half_depth = float(platform.depth_extent_m) / 2.0
+                half_width = float(platform.lateral_extent_m) / 2.0
+                corners = (
+                    center - forward * half_depth + lateral * half_width,
+                    center + forward * half_depth + lateral * half_width,
+                    center + forward * half_depth - lateral * half_width,
+                    center - forward * half_depth - lateral * half_width,
+                )
+                outline_pixels = tuple(
+                    pixel for pixel in (project(point) for point in corners)
+                    if pixel is not None
+                )
+            if project is not None and not slot_pixels:
+                slot_pixels = tuple(
+                    pixel
+                    for pixel in (project(point) for point in platform.slot_centers)
+                    if pixel is not None
+                )
+            if len(outline_pixels) == 4:
                 cv2.polylines(
                     color,
-                    [np.asarray(platform.outline_pixels, dtype=np.int32)],
+                    [np.asarray(outline_pixels, dtype=np.int32)],
                     True,
                     (0, 255, 0),
                     3,
                 )
-            for index, pixel in enumerate(platform.slot_pixels, 1):
+            for index, pixel in enumerate(slot_pixels, 1):
                 radius = 14 if index == 1 else 9
                 draw_color = (0, 0, 255) if index == 1 else (255, 0, 255)
                 cv2.circle(color, pixel, radius, draw_color, -1)
@@ -441,7 +568,8 @@ class Vision:
                 )
         debug_path = self.debug_path if debug_path is None else Path(debug_path)
         cv2.imwrite(str(debug_path), color)
-        return debug_path
+        record_path = self._save_record_image(f"{record_label}_overlay", color)
+        return record_path or debug_path
 
     def capture_cart_frame(self, *, scan_angle_deg, timeout_s=3.0):
         """Capture one synchronized RGB-D frame without calling the 5090."""
@@ -464,9 +592,9 @@ class Vision:
                 snapshot.color,
                 desired_encoding="bgr8",
             )
-            raw_path = self.debug_path.with_name(
-                f"cart_raw_{int(scan_angle_deg):03d}.jpg"
-            )
+            raw_path = self._record_path(
+                f"cart_scan_{int(scan_angle_deg):03d}_raw"
+            ) or self.debug_path.with_name(f"cart_raw_{int(scan_angle_deg):03d}.jpg")
             cv2.imwrite(str(raw_path), raw_color)
             return CapturedCartFrame(
                 snapshot=snapshot,
@@ -492,6 +620,8 @@ class Vision:
                     frame.joints,
                     rpc_captured_at_ns=time.time_ns(),
                     debug_path=debug_path,
+                    record_label=f"cart_scan_{frame.scan_angle_deg:03d}",
+                    record_raw=False,
                 )
             except Exception as error:
                 cause = getattr(error, "__cause__", None)
@@ -618,7 +748,13 @@ class Vision:
                     results.append(located)
                     print(
                         f"[视觉] book #{index} suction @ {frame}: "
-                        f"x={point[0]:.3f}, y={point[1]:.3f}, z={point[2]:.3f}"
+                        f"x={point[0]:.3f}, y={point[1]:.3f}, z={point[2]:.3f}; "
+                        f"long_axis=({book.geometry.long_axis[0]:.3f},"
+                        f"{book.geometry.long_axis[1]:.3f}); "
+                        f"short_axis=({book.geometry.short_axis_right_to_left[0]:.3f},"
+                        f"{book.geometry.short_axis_right_to_left[1]:.3f}); "
+                        f"size=({book.geometry.long_extent_m:.3f},"
+                        f"{book.geometry.short_extent_m:.3f}) m"
                     )
                 return results
             except Exception as error:

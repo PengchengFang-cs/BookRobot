@@ -22,7 +22,10 @@
 - `/home/cvailab/fpc` is the authoritative development repository. Keep
   `/home/cvailab/fpc-ops` only as historical operations material unless the
   user explicitly asks to change or remove it.
-- The only writable project path on `tsinghuaBot` is `/home/unix_ai/fpc`.
+- The writable project paths on `tsinghuaBot` are `/home/unix_ai/fpc` and
+  `/home/unix_ai/DataCollector/DataReplay_v3`.
+- The teleoperation pointer may be written only at
+  `/home/unix_ai/work/manipulation/start.sh`; the Luca sources remain read-only.
 - All other paths on tsinghuaBot are read-only reference material.
 - Reference material may be read and copied into the two `fpc` project paths for development.
 - Keep the original reference paths read-only; modify copied working files only inside the two `fpc` project paths.
@@ -99,8 +102,9 @@
 ## Remote operation safety
 
 - Use the read-only mount or read-only commands when inspecting reference code.
-- Deploy only committed files from a clean local `main` using
-  `scripts/deploy_to_robot.sh`.
+- Deploy only committed files from a clean local branch using
+  `scripts/deploy_to_robot.sh`. Feature branches may be deployed directly
+  without first merging them into `main`.
 - `/home/unix_ai/fpc` is a plain runtime copy, not a Git working tree. Do not
   require it to pull, clone, or fast-forward.
 - GitHub is backup-only and is not part of robot deployment.

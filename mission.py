@@ -79,7 +79,14 @@ class StableLocatedBook:
 
 def _format_residual(label, target):
     dx, dy, dz = target.residual_m
-    return f"{label}: dx={dx:.3f} m, dy={dy:.3f} m, dz={dz:.3f} m"
+    return (
+        f"{label}: "
+        f"目标=({target.reference_m[0]:.3f}, {target.reference_m[1]:.3f}, "
+        f"{target.reference_m[2]:.3f}) m, "
+        f"检测=({target.observed_m[0]:.3f}, {target.observed_m[1]:.3f}, "
+        f"{target.observed_m[2]:.3f}) m, "
+        f"误差 dx={dx:.3f} m, dy={dy:.3f} m, dz={dz:.3f} m"
+    )
 
 
 def _format_navigation(label, navigation):
@@ -419,6 +426,12 @@ def run_cart_place_alignment_once(
         say(
             "Place 2.4 细校准 "
             f"{correction_index}/{CART_PLACE_MAXIMUM_CORRECTIONS}: "
+            f"目标=({target.reference_anchor_m[0]:.3f}, "
+            f"{target.reference_anchor_m[1]:.3f}, "
+            f"{target.reference_anchor_m[2]:.3f}) m, "
+            f"检测=({target.observed_anchor_m[0]:.3f}, "
+            f"{target.observed_anchor_m[1]:.3f}, "
+            f"{target.observed_anchor_m[2]:.3f}) m, "
             f"前后={target.residual_m[0]:.3f} m, "
             f"左右={target.residual_m[1]:.3f} m, "
             f"yaw={target.yaw_error_rad * 180.0 / 3.141592653589793:.2f}°"

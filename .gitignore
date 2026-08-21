@@ -21,4 +21,5 @@ generated/
 ros_overlay/
 outputs/
 results/
+weekly_report_*/
 *.log

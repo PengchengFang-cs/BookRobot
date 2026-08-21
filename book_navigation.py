@@ -469,6 +469,12 @@ class Stage1TableReturnNavigator:
         from book_alignment import COARSE_APPROACH_REFERENCE_BASE_M
 
         table_leg = float(COARSE_APPROACH_REFERENCE_BASE_M[1]) - point[1]
+        print(
+            "[导航] 书桌粗定位: "
+            f"选中书本点=({point[0]:.3f}, {point[1]:.3f}, {point[2]:.3f}) m, "
+            f"目标Y={COARSE_APPROACH_REFERENCE_BASE_M[1]:.3f} m, "
+            f"直行距离={table_leg:.3f} m"
+        )
         if self.runtime is None:
             self.runtime = load_navnav_runtime()
         adapter = self.runtime.WandaRos2Adapter()
