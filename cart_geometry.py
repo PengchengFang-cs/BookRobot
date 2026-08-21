@@ -1,7 +1,7 @@
 """ROS-free cart geometry used by coarse and fine cart alignment."""
 
 from dataclasses import dataclass
-from itertools import permutations
+from itertools import combinations, permutations
 from typing import Callable, Sequence
 
 import numpy as np
@@ -180,7 +180,7 @@ def detect_cart_black_marker_pixels(
     *,
     color_bgr,
     observation,
-    gray_threshold=160,
+    gray_threshold=120,
 ):
     """Return back-left/back-right/front-left/front-right marker centers."""
 
@@ -218,9 +218,17 @@ def detect_cart_black_marker_pixels(
         )
         if not minimum_area <= area <= maximum_area:
             continue
-        if not 4 <= component_width <= 72:
+        if not (
+            max(4, int(round(width * 0.010)))
+            <= component_width
+            <= max(8, int(round(width * 0.070)))
+        ):
             continue
-        if not 4 <= component_height <= 40:
+        if not (
+            max(2, int(round(height * 0.004)))
+            <= component_height
+            <= max(5, int(round(height * 0.040)))
+        ):
             continue
         aspect_ratio = component_width / component_height
         if not 0.5 <= aspect_ratio <= 6.0:
@@ -235,7 +243,7 @@ def detect_cart_black_marker_pixels(
             component_height,
         ))
 
-    if not 2 <= len(candidates) <= 4:
+    if len(candidates) < 2:
         _fail(f"cart_marker_count_invalid:{len(candidates)}")
     candidates.sort(key=lambda item: (item[1], item[0]))
 
@@ -246,10 +254,6 @@ def detect_cart_black_marker_pixels(
             "bbox": (left, top, marker_width, marker_height),
         }
 
-    if len(candidates) == 4:
-        back = sorted(candidates[:2], key=lambda item: item[0])
-        front = sorted(candidates[2:], key=lambda item: item[0])
-        candidates = (back[0], back[1], front[0], front[1])
     return tuple(marker(item) for item in candidates)
 
 
@@ -264,9 +268,6 @@ def _complete_cart_marker_points(
     """Return back-left/back-right/front-left/front-right marker points."""
 
     points = tuple(np.asarray(point, dtype=float) for point in marker_points)
-    if len(points) == 4:
-        return points
-
     role_names = ("back_left", "back_right", "front_left", "front_right")
     role_xy = {
         "back_left": np.array((0.0, 0.0)),
@@ -275,48 +276,63 @@ def _complete_cart_marker_points(
         "front_right": np.array((marker_width_m, marker_depth_m)),
     }
 
-    if len(points) == 3:
+    def assignment_matches(assignment):
+        def image_order(first, second, axis):
+            if first not in assignment or second not in assignment:
+                return True
+            first_center = markers[assignment[first]]["center"]
+            second_center = markers[assignment[second]]["center"]
+            return first_center[axis] < second_center[axis]
+
+        if not (
+            image_order("back_left", "back_right", 0)
+            and image_order("front_left", "front_right", 0)
+            and image_order("back_left", "front_left", 1)
+            and image_order("back_right", "front_right", 1)
+        ):
+            return False
+
+        assigned_roles = tuple(assignment)
+        for first_index, first_role in enumerate(assigned_roles):
+            for second_role in assigned_roles[first_index + 1:]:
+                measured = float(np.linalg.norm(
+                    points[assignment[first_role]]
+                    - points[assignment[second_role]]
+                ))
+                expected = float(np.linalg.norm(
+                    role_xy[first_role] - role_xy[second_role]
+                ))
+                if abs(measured - expected) > distance_tolerance_m:
+                    return False
+        return True
+
+    if len(points) >= 4:
+        four_point_matches = []
+        for point_indices in combinations(range(len(points)), 4):
+            for point_order in permutations(point_indices):
+                assignment = dict(zip(role_names, point_order))
+                if assignment_matches(assignment):
+                    four_point_matches.append(assignment)
+        if len(four_point_matches) > 1:
+            _fail(f"cart_marker_four_point_ambiguous:{len(four_point_matches)}")
+        if len(four_point_matches) == 1:
+            assignment = four_point_matches[0]
+            return tuple(points[assignment[role]] for role in role_names)
+
+    if len(points) >= 3:
         matches = []
-        for missing_role in role_names:
-            present_roles = tuple(
-                role for role in role_names if role != missing_role
-            )
-            for point_order in permutations(range(3)):
-                assignment = dict(zip(present_roles, point_order))
+        for point_indices in combinations(range(len(points)), 3):
+            for missing_role in role_names:
+                present_roles = tuple(
+                    role for role in role_names if role != missing_role
+                )
+                for point_order in permutations(point_indices):
+                    assignment = dict(zip(present_roles, point_order))
+                    if assignment_matches(assignment):
+                        matches.append((missing_role, assignment))
 
-                def image_order(first, second, axis):
-                    if first not in assignment or second not in assignment:
-                        return True
-                    first_center = markers[assignment[first]]["center"]
-                    second_center = markers[assignment[second]]["center"]
-                    return first_center[axis] < second_center[axis]
-
-                if not (
-                    image_order("back_left", "back_right", 0)
-                    and image_order("front_left", "front_right", 0)
-                    and image_order("back_left", "front_left", 1)
-                    and image_order("back_right", "front_right", 1)
-                ):
-                    continue
-
-                valid = True
-                for first_index, first_role in enumerate(present_roles):
-                    for second_role in present_roles[first_index + 1:]:
-                        measured = float(np.linalg.norm(
-                            points[assignment[first_role]]
-                            - points[assignment[second_role]]
-                        ))
-                        expected = float(np.linalg.norm(
-                            role_xy[first_role] - role_xy[second_role]
-                        ))
-                        if abs(measured - expected) > distance_tolerance_m:
-                            valid = False
-                            break
-                    if not valid:
-                        break
-                if valid:
-                    matches.append((missing_role, assignment))
-
+        if len(matches) > 1:
+            _fail(f"cart_marker_three_point_ambiguous:{len(matches)}")
         if len(matches) == 1:
             missing_role, assignment = matches[0]
             completed = {
@@ -395,7 +411,7 @@ def reconstruct_cart_marker_platform(
     platform_depth_m=0.29,
     marker_size_m=0.018,
     marker_distance_tolerance_m=0.018,
-    gray_threshold=160,
+    gray_threshold=120,
     minimum_depth_m=0.20,
     maximum_depth_m=3.0,
 ):
