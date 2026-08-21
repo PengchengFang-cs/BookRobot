@@ -247,43 +247,55 @@ def run_real(args):
                 place_reference = load_replay_place_reference(
                     REPLAY_PLACE_REFERENCE_PATH
                 )
-                pick_replayer = Stage1BookPickReplayer(**feedback)
-                place_replayer = Stage1BookPlaceReplayer(**feedback)
-                with ThreadPoolExecutor(max_workers=2) as replay_loader:
-                    pick_loaded = replay_loader.submit(pick_replayer.preload)
-                    place_loaded = replay_loader.submit(place_replayer.preload)
-                    if not args.skip_stage1_initial_coarse:
-                        CartPlaceDockingNavigator().set_observation_torso(0.20)
-                        vision.set_head_pose(yaw_rad=0.0, pitch_rad=0.25)
-                        say("扫描书本并沿直角路线到达第一轮抓书位置")
-                        Stage1TableReturnNavigator(
-                            vision=vision,
-                            retreat_before_turn=False,
-                        ).navigate()
-                    pick_loaded.result()
-                    place_loaded.result()
-                    for book_index in range(1, 4):
-                        say(f"Stage 1 第 {book_index}/3 本")
-                        run_book_pick_place_once(
-                            vision,
-                            BookAlignmentNavigator(mode=args.book_align_mode),
-                            pick_replayer,
-                            pick_reference,
-                            Stage1CartNavigator(
+                pick_replayer = Stage1BookPickReplayer(
+                    **feedback,
+                    keep_runtime_open=True,
+                )
+                place_replayer = Stage1BookPlaceReplayer(
+                    **feedback,
+                    keep_runtime_open=True,
+                )
+                try:
+                    pick_replayer.initialize()
+                    place_replayer.initialize()
+                    with ThreadPoolExecutor(max_workers=2) as replay_loader:
+                        pick_loaded = replay_loader.submit(pick_replayer.preload)
+                        place_loaded = replay_loader.submit(place_replayer.preload)
+                        if not args.skip_stage1_initial_coarse:
+                            CartPlaceDockingNavigator().set_observation_torso(0.20)
+                            vision.set_head_pose(yaw_rad=0.0, pitch_rad=0.25)
+                            say("扫描书本并沿直角路线到达第一轮抓书位置")
+                            Stage1TableReturnNavigator(
                                 vision=vision,
-                                book_index=book_index,
-                            ),
-                            CartPlaceDockingNavigator(),
-                            place_replayer,
-                            place_reference,
-                            slot_index=book_index,
-                            coarse=(args.book_coarse and book_index == 1),
-                            press_m=args.book_pick_press_mm / 1000.0,
-                            say=say,
-                        )
-                        if book_index < 3:
-                            say("扫描书本并沿直角路线返回下一轮抓书位置")
-                            Stage1TableReturnNavigator(vision=vision).navigate()
+                                retreat_before_turn=False,
+                            ).navigate()
+                        pick_loaded.result()
+                        place_loaded.result()
+                        for book_index in range(1, 4):
+                            say(f"Stage 1 第 {book_index}/3 本")
+                            run_book_pick_place_once(
+                                vision,
+                                BookAlignmentNavigator(mode=args.book_align_mode),
+                                pick_replayer,
+                                pick_reference,
+                                Stage1CartNavigator(
+                                    vision=vision,
+                                    book_index=book_index,
+                                ),
+                                CartPlaceDockingNavigator(),
+                                place_replayer,
+                                place_reference,
+                                slot_index=book_index,
+                                coarse=(args.book_coarse and book_index == 1),
+                                press_m=args.book_pick_press_mm / 1000.0,
+                                say=say,
+                            )
+                            if book_index < 3:
+                                say("扫描书本并沿直角路线返回下一轮抓书位置")
+                                Stage1TableReturnNavigator(vision=vision).navigate()
+                finally:
+                    pick_replayer.close()
+                    place_replayer.close()
             elif args.book_place:
                 from book_place_replay import Stage1BookPlaceReplayer
 

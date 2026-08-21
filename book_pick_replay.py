@@ -256,7 +256,7 @@ class LegacyV3PickRuntime:
         return module
 
     def load_episode(self):
-        module = self.initialize_module()
+        module = self.module if self.module is not None else self.initialize_module()
         episode = module.HDF5EpisodeLoader.load(str(self.entry["file"]))
         if int(getattr(episode, "num_frames", -1)) != self.frame_count:
             raise RuntimeError(
@@ -833,38 +833,48 @@ def load_legacy_v3_pick_runtime(
 class Stage1BookPickReplayer:
     """Apply visual Z once, replay the Pick episode, and leave the book held."""
 
-    def __init__(self, runtime=None, *, joint_positions=None, spin_feedback=None):
+    def __init__(
+        self,
+        runtime=None,
+        *,
+        joint_positions=None,
+        spin_feedback=None,
+        keep_runtime_open=False,
+    ):
         self.runtime = runtime
         self.joint_positions = joint_positions
         self.spin_feedback = spin_feedback
+        self.keep_runtime_open = bool(keep_runtime_open)
         self._prepared_episode = None
+        self._frame_zero_prepared = False
 
-    def preload(self):
-        if self._prepared_episode is not None:
-            return
+    def initialize(self):
         if self.runtime is None:
             self.runtime = load_legacy_v3_pick_runtime(
                 joint_positions=self.joint_positions,
                 spin_feedback=self.spin_feedback,
             )
-        try:
-            self._prepared_episode = self.runtime.load_episode()
-        finally:
-            self.runtime.close()
-            self.runtime = None
+            self.runtime.initialize_module()
+
+    def preload(self):
+        if self._prepared_episode is not None:
+            return
+        self.initialize()
+        self._prepared_episode = self.runtime.load_episode()
 
     def prepare(self):
         self.preload()
-        self.runtime = load_legacy_v3_pick_runtime(
-            joint_positions=self.joint_positions,
-            spin_feedback=self.spin_feedback,
-        )
-        self.runtime.initialize_module()
-        self.runtime.prepare_frame_zero(self._prepared_episode)
+        self._frame_zero_prepared = False
+        try:
+            self.runtime.prepare_frame_zero(self._prepared_episode)
+            self._frame_zero_prepared = True
+        except Exception:
+            self._frame_zero_prepared = False
+            raise
 
     def pick(self, z_offset_m, *, check_holding=False):
         offset = _finite_offset(z_offset_m)
-        if self.runtime is None or self._prepared_episode is None:
+        if not self._frame_zero_prepared:
             self.prepare()
         replay_started = False
         try:
@@ -899,5 +909,10 @@ class Stage1BookPickReplayer:
                     print(f"[D01] Pick 失败后的关闭命令也失败: {cleanup_error}")
             raise
         finally:
+            self._frame_zero_prepared = False
+            if not self.keep_runtime_open:
+                self.runtime.close()
+
+    def close(self):
+        if self.runtime is not None:
             self.runtime.close()
-            self.runtime = None

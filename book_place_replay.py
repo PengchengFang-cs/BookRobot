@@ -72,33 +72,36 @@ class LegacyV3PlaceRuntime(LegacyV3PickRuntime):
 class Stage1BookPlaceReplayer:
     """Restore Place frame zero, replay 2.4, and leave the book in the cart."""
 
-    def __init__(self, runtime=None, *, joint_positions=None, spin_feedback=None):
+    def __init__(
+        self,
+        runtime=None,
+        *,
+        joint_positions=None,
+        spin_feedback=None,
+        keep_runtime_open=False,
+    ):
         self.runtime = runtime
         self.joint_positions = joint_positions
         self.spin_feedback = spin_feedback
+        self.keep_runtime_open = bool(keep_runtime_open)
         self._prepared_episode = None
 
-    def preload(self):
-        if self._prepared_episode is not None:
-            return
+    def initialize(self):
         if self.runtime is None:
             self.runtime = load_legacy_v3_place_runtime(
                 joint_positions=self.joint_positions,
                 spin_feedback=self.spin_feedback,
             )
-        try:
-            self._prepared_episode = self.runtime.load_episode()
-        finally:
-            self.runtime.close()
-            self.runtime = None
+            self.runtime.initialize_module()
+
+    def preload(self):
+        if self._prepared_episode is not None:
+            return
+        self.initialize()
+        self._prepared_episode = self.runtime.load_episode()
 
     def place(self):
         self.preload()
-        self.runtime = load_legacy_v3_place_runtime(
-            joint_positions=self.joint_positions,
-            spin_feedback=self.spin_feedback,
-        )
-        self.runtime.initialize_module()
         try:
             episode = self._prepared_episode
             torso_target = float(episode.actions["target_qpos_torso"][0, 0])
@@ -114,8 +117,12 @@ class Stage1BookPlaceReplayer:
                 d01_released=released,
             )
         finally:
+            if not self.keep_runtime_open:
+                self.runtime.close()
+
+    def close(self):
+        if self.runtime is not None:
             self.runtime.close()
-            self.runtime = None
 
 
 def load_legacy_v3_place_runtime(

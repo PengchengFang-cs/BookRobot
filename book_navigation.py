@@ -296,7 +296,7 @@ class Stage1CartNavigator:
                     CART_SCAN_STEP_RAD,
                     "Y",
                 )
-                adapter.execute_command(turn, precision_mode=False)
+                adapter.execute_command(turn, precision_mode=True)
                 commands_sent += 1
                 pose = adapter.current_task_pose()
                 scan_angle_deg = step * 15
@@ -398,7 +398,7 @@ class Stage1CartNavigator:
                 -math.pi / 2.0,
                 "Y",
             )
-            adapter.execute_command(return_turn, precision_mode=False)
+            adapter.execute_command(return_turn, precision_mode=True)
             commands_sent += 1
 
             # The route started by backing exactly 20 cm away from the Pick
@@ -494,7 +494,10 @@ class Stage1TableReturnNavigator:
                 )
             )
             for command in route:
-                adapter.execute_command(command, precision_mode=False)
+                adapter.execute_command(
+                    command,
+                    precision_mode=(command.kind is self.runtime.WandaCommandKind.SPIN),
+                )
                 commands_sent += 1
             kind = (
                 self.runtime.WandaCommandKind.DRIVE_FORWARD
@@ -518,7 +521,10 @@ class Stage1TableReturnNavigator:
                     )
                 )
             for command in finish:
-                adapter.execute_command(command, precision_mode=False)
+                adapter.execute_command(
+                    command,
+                    precision_mode=(command.kind is self.runtime.WandaCommandKind.SPIN),
+                )
                 commands_sent += 1
             adapter.correct_absolute_imu_yaw(
                 target_yaw_rad=starting_yaw,
