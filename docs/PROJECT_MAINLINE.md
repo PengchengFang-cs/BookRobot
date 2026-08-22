@@ -25,7 +25,7 @@ FPC 当前基于 FruitTest 的可废弃副本实现 Stage 1 完整任务：到�
 
 ## 部署与备份
 
-正常部署方向是从 RTX 5090 的 `/home/cvailab/fpc` 通过 `scripts/deploy_to_robot.sh` 直接更新 Wanda 的 `/home/unix_ai/fpc`。部署源必须是本地干净的 `main`，脚本只导出已提交文件。
+正常部署方向是从 RTX 5090 的 `/home/cvailab/fpc` 通过 `scripts/deploy_to_robot.sh` 直接更新 Wanda 的 `/home/unix_ai/fpc`。部署源可以是本地已提交且没有已跟踪修改的 `main` 或功能分支，脚本只导出当前 `HEAD` 中已经提交的文件。
 
 Wanda 的 `/home/unix_ai/fpc` 是普通运行副本，不是 Git 工作树，不需要 clone、pull 或 fast-forward。脚本默认不删除机器人额外的日志、模型、缓存或其他运行文件。服务器地址、用户、目录和命令见 [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md)。
 
