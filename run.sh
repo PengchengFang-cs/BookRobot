@@ -28,10 +28,23 @@ if [[ " $* " == *" --book-align "* || \
       " $* " == *" --cart-approach-navigation "* ]]; then
   source "$DIR/scripts/book_vision_env.sh"
   RUN_ID="${FPC_EXPERIMENT_RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
+  DEPLOYED_COMMIT=unknown
+  if [[ -f "$DIR/.deployed-commit" ]]; then
+    read -r DEPLOYED_COMMIT <"$DIR/.deployed-commit"
+  elif git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    DEPLOYED_COMMIT="$(git -C "$DIR" rev-parse HEAD)"
+  fi
+  export FPC_EXPERIMENT_RUN_ID="$RUN_ID"
+  export FPC_DEPLOYED_COMMIT="$DEPLOYED_COMMIT"
   export FPC_EXPERIMENT_RECORD_DIR="$DIR/logs/record_rebot/$RUN_ID"
+  if [[ -e "$FPC_EXPERIMENT_RECORD_DIR" ]]; then
+    printf 'error: experiment run_id already exists: %s\n' \
+      "$FPC_EXPERIMENT_RECORD_DIR" >&2
+    exit 2
+  fi
   mkdir -p "$FPC_EXPERIMENT_RECORD_DIR"
-  printf 'run_id=%s\nstarted_at=%s\ncommand=%q' \
-    "$RUN_ID" "$(date --iso-8601=seconds)" "$DIR/main.py" \
+  printf 'run_id=%s\ndeployed_commit=%s\nstarted_at=%s\ncommand=%q' \
+    "$RUN_ID" "$DEPLOYED_COMMIT" "$(date --iso-8601=seconds)" "$DIR/main.py" \
     >"$FPC_EXPERIMENT_RECORD_DIR/run.txt"
   printf ' %q' "$@" >>"$FPC_EXPERIMENT_RECORD_DIR/run.txt"
   printf '\n' >>"$FPC_EXPERIMENT_RECORD_DIR/run.txt"

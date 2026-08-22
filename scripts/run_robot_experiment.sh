@@ -5,6 +5,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 LOCAL_DIR="$ROOT/logs/record_rebot/$RUN_ID"
 REMOTE_DIR="/home/unix_ai/fpc/logs/record_rebot/$RUN_ID"
+if [[ -e "$LOCAL_DIR" ]]; then
+  printf 'error: experiment run_id already exists: %s\n' "$LOCAL_DIR" >&2
+  exit 2
+fi
 mkdir -p "$LOCAL_DIR"
 
 REMOTE_COMMAND="cd /home/unix_ai/fpc && FPC_EXPERIMENT_RUN_ID=$RUN_ID ./run.sh"

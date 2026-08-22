@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from statistics import median
 
+from experiment_timing import timed_phase
 from cart_place_alignment import (
     build_cart_place_alignment_target,
     median_cart_place_alignment_target,
@@ -185,10 +186,20 @@ def _run_precise_alignment_loop(
             say("XY验收=未达标")
             return first_target, target, last_navigation, False
 
-        last_navigation = navigator.align(
-            reference=target.reference_m,
-            observed=target.observed_m,
-        )
+        with timed_phase(
+            "pick_alignment_motion",
+            correction_index=correction_index + 1,
+        ) as timing:
+            last_navigation = navigator.align(
+                reference=target.reference_m,
+                observed=target.observed_m,
+            )
+            timing.update(
+                command_count=last_navigation.command_count,
+                odom_dx_m=last_navigation.odom_dx_m,
+                odom_dy_m=last_navigation.odom_dy_m,
+                imu_dyaw_rad=last_navigation.imu_dyaw_rad,
+            )
         say(
             _format_navigation(
                 f"第 {correction_index + 1} 次细校准运动反馈",
@@ -201,35 +212,48 @@ def _run_precise_alignment_loop(
             odom_dy_m=last_navigation.odom_dy_m,
             imu_dyaw_rad=last_navigation.imu_dyaw_rad,
         )
-        book = _stable_book_measurement(
-            vision,
-            lambda books, predicted=predicted: reassociate_book(
-                books,
-                predicted_point_m=predicted,
-                replay_reference=replay_reference,
-            ),
-            say=say,
-        )
+        with timed_phase(
+            "pick_book_vision",
+            observation="after_correction",
+            correction_index=correction_index + 1,
+        ):
+            book = _stable_book_measurement(
+                vision,
+                lambda books, predicted=predicted: reassociate_book(
+                    books,
+                    predicted_point_m=predicted,
+                    replay_reference=replay_reference,
+                ),
+                say=say,
+            )
 
 
 def run_book_alignment_once(vision, navigator, replay_reference, say=print):
     """Run coarse visual approach followed by replay-image precise docking."""
 
-    coarse_book = _stable_book_measurement(
-        vision,
-        lambda books: select_coarse_book(books).book,
-        say=say,
-    )
+    with timed_phase("pick_book_vision", observation="coarse"):
+        coarse_book = _stable_book_measurement(
+            vision,
+            lambda books: select_coarse_book(books).book,
+            say=say,
+        )
     coarse = select_coarse_book((coarse_book,))
     say(
         "0.48 m 粗定位: "
         f"observed=({coarse.observed_m[0]:.3f}, "
         f"{coarse.observed_m[1]:.3f}, {coarse.observed_m[2]:.3f}) m"
     )
-    coarse_navigation = navigator.align(
-        reference=coarse.reference_m,
-        observed=coarse.observed_m,
-    )
+    with timed_phase("pick_alignment_motion", observation="coarse") as timing:
+        coarse_navigation = navigator.align(
+            reference=coarse.reference_m,
+            observed=coarse.observed_m,
+        )
+        timing.update(
+            command_count=coarse_navigation.command_count,
+            odom_dx_m=coarse_navigation.odom_dx_m,
+            odom_dy_m=coarse_navigation.odom_dy_m,
+            imu_dyaw_rad=coarse_navigation.imu_dyaw_rad,
+        )
     say(_format_navigation("粗定位运动反馈", coarse_navigation))
 
     initial_contact = coarse.book.suction_point
@@ -239,15 +263,16 @@ def run_book_alignment_once(vision, navigator, replay_reference, say=print):
         odom_dy_m=coarse_navigation.odom_dy_m,
         imu_dyaw_rad=coarse_navigation.imu_dyaw_rad,
     )
-    after_coarse_book = _stable_book_measurement(
-        vision,
-        lambda books: reassociate_book(
-            books,
-            predicted_point_m=predicted_after_coarse,
-            replay_reference=replay_reference,
-        ),
-        say=say,
-    )
+    with timed_phase("pick_book_vision", observation="after_coarse"):
+        after_coarse_book = _stable_book_measurement(
+            vision,
+            lambda books: reassociate_book(
+                books,
+                predicted_point_m=predicted_after_coarse,
+                replay_reference=replay_reference,
+            ),
+            say=say,
+        )
     precise, final, precise_navigation, xy_within_tolerance = (
         _run_precise_alignment_loop(
             vision,
@@ -276,14 +301,15 @@ def run_book_alignment_from_current_once(
 ):
     """Skip coarse approach and precisely dock from the current base pose."""
 
-    current_book = _stable_book_measurement(
-        vision,
-        lambda books: select_replay_book(
-            books,
-            replay_reference=replay_reference,
-        ),
-        say=say,
-    )
+    with timed_phase("pick_book_vision", observation="initial"):
+        current_book = _stable_book_measurement(
+            vision,
+            lambda books: select_replay_book(
+                books,
+                replay_reference=replay_reference,
+            ),
+            say=say,
+        )
     precise, final, precise_navigation, xy_within_tolerance = (
         _run_precise_alignment_loop(
             vision,
@@ -316,13 +342,21 @@ def run_book_pick_once(
     """Align one book, apply the fixed Z handoff, and replay one Pick."""
 
     say("新一轮抓取：先自动恢复 DataReplay 第0帧观察姿态")
-    replayer.prepare()
+    with timed_phase("pick_frame_zero_prepare"):
+        replayer.prepare()
     align = (
         run_book_alignment_once
         if coarse
         else run_book_alignment_from_current_once
     )
-    alignment = align(vision, navigator, replay_reference, say=say)
+    with timed_phase("pick_alignment") as timing:
+        alignment = align(vision, navigator, replay_reference, say=say)
+        timing.update(
+            xy_within_tolerance=alignment.xy_within_tolerance,
+            final_dx_m=alignment.final.residual_m[0],
+            final_dy_m=alignment.final.residual_m[1],
+            final_dz_m=alignment.final.residual_m[2],
+        )
     if not alignment.xy_within_tolerance:
         dx, dy, _ = alignment.final.residual_m
         raise RuntimeError(
@@ -335,7 +369,14 @@ def run_book_pick_once(
         "开始执行 Stage-1 Pick："
         f"DataReplay 原始高度，额外下压={press_m * 1000.0:.1f} mm"
     )
-    replay = replayer.pick(-press_m)
+    with timed_phase("pick_replay", speed=1.0) as timing:
+        replay = replayer.pick(-press_m)
+        timing.update(
+            frames_sent=replay.frames_sent,
+            torso_target_m=replay.torso_target_m,
+            torso_actual_m=replay.torso_actual_m,
+            d01_holding=replay.d01_holding,
+        )
     say(
         f"Pick 回放完成: frames={replay.frames_sent}, "
         f"torso target={replay.torso_target_m:.3f} m, "
@@ -402,13 +443,19 @@ def run_cart_place_alignment_once(
 ):
     """Repeatedly match live shelf geometry to Place-2.4 frame zero."""
 
-    torso_actual_m = navigator.set_observation_torso(
-        replay_reference.recorded_torso_m
-    )
-    vision.set_head_pose(
-        yaw_rad=replay_reference.recorded_head_rad[0],
-        pitch_rad=replay_reference.recorded_head_rad[1],
-    )
+    with timed_phase("place_observation_pose") as timing:
+        torso_actual_m = navigator.set_observation_torso(
+            replay_reference.recorded_torso_m
+        )
+        vision.set_head_pose(
+            yaw_rad=replay_reference.recorded_head_rad[0],
+            pitch_rad=replay_reference.recorded_head_rad[1],
+        )
+        timing.update(
+            torso_actual_m=torso_actual_m,
+            head_yaw_rad=replay_reference.recorded_head_rad[0],
+            head_pitch_rad=replay_reference.recorded_head_rad[1],
+        )
     say(
         "Place 感知姿态已恢复: "
         f"torso={torso_actual_m:.3f} m, "
@@ -418,9 +465,14 @@ def run_cart_place_alignment_once(
     first = None
     last_navigation = None
     for correction_index in range(CART_PLACE_MAXIMUM_CORRECTIONS + 1):
-        target = _stable_cart_place_target(
-            vision, replay_reference, slot_index
-        )
+        with timed_phase(
+            "place_cart_vision",
+            correction_index=correction_index,
+            slot_index=slot_index,
+        ):
+            target = _stable_cart_place_target(
+                vision, replay_reference, slot_index
+            )
         if first is None:
             first = target
         say(
@@ -440,7 +492,18 @@ def run_cart_place_alignment_once(
             return CartPlaceAlignmentRun(first, target, last_navigation, True)
         if correction_index == CART_PLACE_MAXIMUM_CORRECTIONS:
             return CartPlaceAlignmentRun(first, target, last_navigation, False)
-        last_navigation = navigator.align(target)
+        with timed_phase(
+            "place_alignment_motion",
+            correction_index=correction_index + 1,
+            slot_index=slot_index,
+        ) as timing:
+            last_navigation = navigator.align(target)
+            timing.update(
+                command_count=last_navigation.command_count,
+                odom_dx_m=last_navigation.odom_dx_m,
+                odom_dy_m=last_navigation.odom_dy_m,
+                imu_dyaw_rad=last_navigation.imu_dyaw_rad,
+            )
         say(_format_navigation("小推车细校准运动反馈", last_navigation))
     raise AssertionError("unreachable")
 
@@ -454,13 +517,20 @@ def run_book_place_once(
     slot_index,
     say=print,
 ):
-    alignment = run_cart_place_alignment_once(
-        vision,
-        navigator,
-        replay_reference,
-        slot_index=slot_index,
-        say=say,
-    )
+    with timed_phase("place_alignment", slot_index=slot_index) as timing:
+        alignment = run_cart_place_alignment_once(
+            vision,
+            navigator,
+            replay_reference,
+            slot_index=slot_index,
+            say=say,
+        )
+        timing.update(
+            within_tolerance=alignment.within_tolerance,
+            final_dx_m=alignment.final.residual_m[0],
+            final_dy_m=alignment.final.residual_m[1],
+            final_yaw_rad=alignment.final.yaw_error_rad,
+        )
     if not alignment.within_tolerance:
         target = alignment.final
         raise RuntimeError(
@@ -470,7 +540,14 @@ def run_book_place_once(
             f"yaw={target.yaw_error_rad * 180.0 / 3.141592653589793:.2f}°"
         )
     say("恢复 Place 2.4 第0帧全身姿态并以1.0倍速回放")
-    replay = replayer.place()
+    with timed_phase("place_replay", speed=1.0, slot_index=slot_index) as timing:
+        replay = replayer.place()
+        timing.update(
+            frames_sent=replay.frames_sent,
+            torso_target_m=replay.torso_target_m,
+            torso_actual_m=replay.torso_actual_m,
+            d01_released=replay.d01_released,
+        )
     say(
         f"Place 回放完成: frames={replay.frames_sent}, "
         f"torso target={replay.torso_target_m:.3f} m, "
@@ -505,7 +582,17 @@ def run_book_pick_place_once(
         press_m=press_m,
     )
     say("Pick 完成：后退20cm并沿直角路线粗导航到小推车")
-    coarse_cart_navigation = cart_navigator.navigate()
+    with timed_phase("cart_coarse_navigation", slot_index=slot_index) as timing:
+        coarse_cart_navigation = cart_navigator.navigate()
+        timing.update(
+            command_count=coarse_cart_navigation.command_count,
+            odom_dx_m=coarse_cart_navigation.odom_dx_m,
+            odom_dy_m=coarse_cart_navigation.odom_dy_m,
+            imu_dyaw_rad=coarse_cart_navigation.imu_dyaw_rad,
+            selected_scan_yaw_rad=(
+                coarse_cart_navigation.selected_scan_yaw_rad
+            ),
+        )
     place = run_book_place_once(
         vision,
         place_navigator,
