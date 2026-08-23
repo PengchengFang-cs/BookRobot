@@ -429,9 +429,11 @@ feature/stage23-integration
 ```text
 5141b82 deploy: use the current repository as source
 d8ae9f2 stage23: integrate fail-closed mission skeleton
+fda6c80 docs: record stage23 integration boundaries
+a49d6c1 compat: support Python 3.8 stage23 checks
 ```
 
-以下交付物已经进入`d8ae9f2`，等待本轮最终同步到5090：
+以下交付物已经进入Git并同步到5090的`/home/cvailab/Ruan/Library_306`：
 
 ```text
 Stage23_mission_jh.md
@@ -442,6 +444,8 @@ mission_main2.py
 ```
 
 本轮不部署Wanda，也不执行真机实验。
+
+5090同步前原有的五个未跟踪交付文件已保存在`stash@{0}`（说明为`pre-stage23-integration-untracked-20260823`），没有直接删除。同步后的`feature/stage23-integration`工作树干净且不设置到`/home/cvailab/fpc`的upstream。
 
 ### 9.1 重要部署差异
 
@@ -475,6 +479,6 @@ robot_root=/home/unix_ai/fpc
 
 ## 11. 验证状态
 
-本轮只运行纯逻辑单元测试、Python语法检查和shell语法检查；没有运行模型推理、相机采集、部署或机器人实验。Stage 2/3外部接口和连续任务仍未验证。
+中心工作区和5090均已运行纯逻辑单元测试、Python入口检查和shell语法检查。5090默认Python 3.8下，11项Stage 2/3测试和1项部署合同测试通过；`mission_main2.py`按预期列出20类具体缺口并以状态1退出。没有运行模型推理、相机采集、Wanda部署或机器人实验，Stage 2/3外部接口和连续任务仍未验证。
 
 当前唯一被代码保证的安全行为是：只要任一已知缺口仍未填写，`mission_main2.py`会在ROS初始化和任何机器人运动之前失败退出。

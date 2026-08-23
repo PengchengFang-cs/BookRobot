@@ -26,7 +26,7 @@ Stage 1 的 Pick 已真机吸书成功。Place 2.4 第 0 帧托板参考、多�
 - `--book-place`、`--book-pick-place` 已接通。为缩短逐项速度优化实验，当前 `--stage1-loop` 固定执行两本书、使用槽位 1/2，并只在第一本 Place 后按后退 `0.20 m`→右转→直行→左转→前进 `0.20 m` 返回书桌。最终比赛版本仍需恢复五本。
 - 两本循环会记录部署提交和 `timings.jsonl` 分段耗时。每项优化单独提交；只有动作、精度、回放帧数和 D01 门禁均不退化且核心耗时明确下降，才保留该提交，否则使用 `git revert` 回滚。
 - 当前两本循环和计时改动尚未同步到远端，也尚未运行测试或真机验证。
-- Stage 2→3连续任务的fail-closed编排已在`feature/stage23-integration`融合：`5141b82`使部署源仓库自包含，`d8ae9f2`新增`mission_main2.py`、`mission2.py`和对应交接文档，并接入`run.sh --stage23`。当前仍被D01事件帧、录像参考、OCR、竖直书脊/书架感知、粗导航和新资产合同显式阻断；本轮不做真机实验。
+- Stage 2→3连续任务的fail-closed编排已在`feature/stage23-integration`融合并同步到5090的`/home/cvailab/Ruan/Library_306`：`5141b82`使部署源仓库自包含，`d8ae9f2`新增任务代码和交接，`a49d6c1`补5090 Python 3.8兼容。当前仍被D01事件帧、录像参考、OCR、竖直书脊/书架感知、粗导航和新资产合同显式阻断；本轮不做真机实验。
 
 ## 当前问题
 
