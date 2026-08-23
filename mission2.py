@@ -6,6 +6,8 @@ The interfaces that are not present in the current repository are kept as
 explicit gaps instead of being replaced with a new framework.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 import math
 from pathlib import Path

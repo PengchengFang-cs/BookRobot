@@ -1,6 +1,7 @@
 import math
 import sys
 import unittest
+from contextlib import ExitStack
 from unittest.mock import patch
 
 import mission2
@@ -124,27 +125,32 @@ class Stage23PureLogicTests(unittest.TestCase):
             for name in mission2.PLACE_REFERENCE_POINT_M_BY_ASSET
         }
         yaws = {name: 0.0 for name in mission2.PLACE_REFERENCE_YAW_RAD_BY_ASSET}
-        with (
-            patch.dict(mission2.D01_EVENT_FRAME_BY_ASSET, frames, clear=True),
-            patch.dict(
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch.dict(mission2.D01_EVENT_FRAME_BY_ASSET, frames, clear=True)
+            )
+            stack.enter_context(patch.dict(
                 mission2.PICK_REFERENCE_POINT_M_BY_ASSET,
                 pick_points,
                 clear=True,
-            ),
-            patch.dict(
+            ))
+            stack.enter_context(patch.dict(
                 mission2.PLACE_REFERENCE_POINT_M_BY_ASSET,
                 place_points,
                 clear=True,
-            ),
-            patch.dict(
+            ))
+            stack.enter_context(patch.dict(
                 mission2.PLACE_REFERENCE_YAW_RAD_BY_ASSET,
                 yaws,
                 clear=True,
-            ),
-            patch.object(mission2, "OCR_TRANSPORT_READY", True),
-            patch.object(mission2, "STAGE23_PERCEPTION_READY", True),
-            patch.object(mission2, "STAGE23_COARSE_NAVIGATION_READY", True),
-        ):
+            ))
+            stack.enter_context(patch.object(mission2, "OCR_TRANSPORT_READY", True))
+            stack.enter_context(
+                patch.object(mission2, "STAGE23_PERCEPTION_READY", True)
+            )
+            stack.enter_context(
+                patch.object(mission2, "STAGE23_COARSE_NAVIGATION_READY", True)
+            )
             self.assertEqual(mission2.pending_stage23_configuration(), ())
 
             mission2.D01_EVENT_FRAME_BY_ASSET["DR5.1"] = True
@@ -163,12 +169,14 @@ class Stage23PureLogicTests(unittest.TestCase):
 
 class Stage23EntryTests(unittest.TestCase):
     def test_keyboard_interrupt_returns_130(self):
-        with (
-            patch.object(sys, "argv", ["mission_main2.py"]),
-            patch.object(mission_main2, "run_real", side_effect=KeyboardInterrupt),
-        ):
-            with self.assertRaises(SystemExit) as raised:
-                mission_main2.main()
+        with patch.object(sys, "argv", ["mission_main2.py"]):
+            with patch.object(
+                mission_main2,
+                "run_real",
+                side_effect=KeyboardInterrupt,
+            ):
+                with self.assertRaises(SystemExit) as raised:
+                    mission_main2.main()
 
         self.assertEqual(raised.exception.code, 130)
 
