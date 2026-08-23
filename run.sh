@@ -18,7 +18,20 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI=file:///home/unix_ai/config/cyclonedds.xml
 export PYTHONUNBUFFERED=1
 
-if [[ " $* " == *" --book-align "* || \
+ENTRYPOINT="$DIR/main.py"
+RUN_ARGUMENTS=("$@")
+if [[ " $* " == *" --stage23 "* ]]; then
+  ENTRYPOINT="$DIR/mission_main2.py"
+  RUN_ARGUMENTS=()
+  for argument in "$@"; do
+    if [[ "$argument" != "--stage23" ]]; then
+      RUN_ARGUMENTS+=("$argument")
+    fi
+  done
+fi
+
+if [[ "$ENTRYPOINT" == "$DIR/mission_main2.py" || \
+      " $* " == *" --book-align "* || \
       " $* " == *" --book-pick "* || \
       " $* " == *" --book-place "* || \
       " $* " == *" --book-pick-place "* || \
@@ -44,12 +57,14 @@ if [[ " $* " == *" --book-align "* || \
   fi
   mkdir -p "$FPC_EXPERIMENT_RECORD_DIR"
   printf 'run_id=%s\ndeployed_commit=%s\nstarted_at=%s\ncommand=%q' \
-    "$RUN_ID" "$DEPLOYED_COMMIT" "$(date --iso-8601=seconds)" "$DIR/main.py" \
+    "$RUN_ID" "$DEPLOYED_COMMIT" "$(date --iso-8601=seconds)" "$ENTRYPOINT" \
     >"$FPC_EXPERIMENT_RECORD_DIR/run.txt"
-  printf ' %q' "$@" >>"$FPC_EXPERIMENT_RECORD_DIR/run.txt"
+  if ((${#RUN_ARGUMENTS[@]})); then
+    printf ' %q' "${RUN_ARGUMENTS[@]}" >>"$FPC_EXPERIMENT_RECORD_DIR/run.txt"
+  fi
   printf '\n' >>"$FPC_EXPERIMENT_RECORD_DIR/run.txt"
   set +e
-  python3 "$DIR/main.py" "$@" 2>&1 | \
+  python3 "$ENTRYPOINT" "${RUN_ARGUMENTS[@]}" 2>&1 | \
     tee "$FPC_EXPERIMENT_RECORD_DIR/experiment.log"
   STATUS=${PIPESTATUS[0]}
   set -e
