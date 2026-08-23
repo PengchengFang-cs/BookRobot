@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root=/home/cvailab/fpc
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 robot_root=/home/unix_ai/fpc
 
 cd "$repo_root"
@@ -10,7 +10,7 @@ if [[ -z $(git branch --show-current) ]]; then
     echo 'error: deployment requires a local branch' >&2
     exit 2
 fi
-if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
+if [[ -n $(git status --porcelain) ]]; then
     echo 'error: commit local changes before deployment' >&2
     exit 2
 fi

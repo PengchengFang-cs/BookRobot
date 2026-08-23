@@ -14,7 +14,7 @@ class DeployToRobotContractTests(unittest.TestCase):
         text = SCRIPT.read_text(encoding="utf-8")
 
         for required in (
-            "/home/cvailab/fpc",
+            'repo_root="$(cd "$(dirname "$0")/.." && pwd)"',
             "/home/unix_ai/fpc",
             "git branch --show-current",
             "git status --porcelain",
@@ -24,7 +24,14 @@ class DeployToRobotContractTests(unittest.TestCase):
             ".deployed-commit",
         ):
             self.assertIn(required, text)
-        for forbidden in ("git push", "git pull", "rsync --delete", "--delete"):
+        for forbidden in (
+            "/home/cvailab/fpc",
+            "--untracked-files=no",
+            "git push",
+            "git pull",
+            "rsync --delete",
+            "--delete",
+        ):
             self.assertNotIn(forbidden, text)
 
 
