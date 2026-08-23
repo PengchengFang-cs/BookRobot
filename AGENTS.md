@@ -17,17 +17,19 @@
 
 ## Writable scope
 
-- The writable RTX 5090 project directories are `/home/cvailab/fpc` and
-  `/home/cvailab/fpc-ops`.
-- `/home/cvailab/fpc` is the authoritative development repository. Keep
-  `/home/cvailab/fpc-ops` only as historical operations material unless the
-  user explicitly asks to change or remove it.
+- The writable RTX 5090 project directories are `/home/cvailab/fpc`,
+  `/home/cvailab/Ruan/Library_306`, and `/home/cvailab/fpc-ops`.
+- `/home/cvailab/fpc` remains the validated baseline repository.
+  `/home/cvailab/Ruan/Library_306` is the independent multi-person integration
+  repository and the future single final version. Keep `/home/cvailab/fpc-ops`
+  only as historical operations material unless the user explicitly asks to
+  change or remove it.
 - The writable project paths on `tsinghuaBot` are `/home/unix_ai/fpc` and
   `/home/unix_ai/DataCollector/DataReplay_v3`.
 - The teleoperation pointer may be written only at
   `/home/unix_ai/work/manipulation/start.sh`; the Luca sources remain read-only.
 - All other paths on tsinghuaBot are read-only reference material.
-- Reference material may be read and copied into the two `fpc` project paths for development.
+- Reference material may be read and copied into the listed project paths for development.
 - Keep the original reference paths read-only; modify copied working files only inside the two `fpc` project paths.
 - Never use recursive write, delete, ownership, or permission commands outside
   the listed project paths.
@@ -102,9 +104,10 @@
 ## Remote operation safety
 
 - Use the read-only mount or read-only commands when inspecting reference code.
-- Deploy only committed files from a clean local branch using
-  `scripts/deploy_to_robot.sh`. Feature branches may be deployed directly
-  without first merging them into `main`.
+- Deploy only committed files from a clean local branch using that repository's
+  own `scripts/deploy_to_robot.sh`. The script deploys the repository containing
+  it; feature branches may be deployed directly without first merging them into
+  `main`.
 - `/home/unix_ai/fpc` is a plain runtime copy, not a Git working tree. Do not
   require it to pull, clone, or fast-forward.
 - GitHub is backup-only and is not part of robot deployment.

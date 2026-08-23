@@ -424,7 +424,14 @@ export CYCLONEDDS_URI=file:///home/unix_ai/config/cyclonedds.xml
 feature/stage23-integration
 ```
 
-以下交付物已经进入中心融合分支，等待本轮最终提交同步到5090：
+基础设施和Stage 2/3代码已经分别提交：
+
+```text
+5141b82 deploy: use the current repository as source
+d8ae9f2 stage23: integrate fail-closed mission skeleton
+```
+
+以下交付物已经进入`d8ae9f2`，等待本轮最终同步到5090：
 
 ```text
 Stage23_mission_jh.md

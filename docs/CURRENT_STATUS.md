@@ -8,7 +8,7 @@ Stage 1 的 Pick 已真机吸书成功。Place 2.4 第 0 帧托板参考、多�
 
 ## 已完成且仍有效
 
-- `/home/cvailab/fpc` 是权威开发仓库；Wanda 的 `/home/unix_ai/fpc` 是普通运行副本。部署由 5090 的 `scripts/deploy_to_robot.sh` 直接完成，GitHub 只作备份。
+- `/home/cvailab/fpc` 保留为已验证基线仓库；`/home/cvailab/Ruan/Library_306` 是可独立运行的多人最终集成仓库。两边的 `scripts/deploy_to_robot.sh` 都只部署自身已提交且干净的HEAD；Wanda 的 `/home/unix_ai/fpc` 是普通运行副本，GitHub 只作备份。
 - 视觉链路为 Wanda RGB-D → 5090 Grounding DINO/SAM 二维 mask → Wanda 本地深度/姿态三维几何。候选置信度阈值为 `0.25`，最多返回置信度最高且几何有效的 5 本，不足 5 本返回实际数量。
 - 桌面书抓取点使用机器人视角下从长轴近端向内 `0.13 m`、从右边缘向左 `0.10 m` 的规则。
 - 新 Pick 的 frame 0 13/10 规则点为 `base_link=(0.8981937,-0.2520129,0.7568440) m`；frame 158 蓝色吸盘接触端投影 Y 为 `-0.2589220 m`。最终运行参考组合为 `(0.8981937,-0.2589220,0.7568440) m`，即 X/Z 保留 frame 0 规则点，只用真实接触修正 Y。
@@ -26,6 +26,7 @@ Stage 1 的 Pick 已真机吸书成功。Place 2.4 第 0 帧托板参考、多�
 - `--book-place`、`--book-pick-place` 已接通。为缩短逐项速度优化实验，当前 `--stage1-loop` 固定执行两本书、使用槽位 1/2，并只在第一本 Place 后按后退 `0.20 m`→右转→直行→左转→前进 `0.20 m` 返回书桌。最终比赛版本仍需恢复五本。
 - 两本循环会记录部署提交和 `timings.jsonl` 分段耗时。每项优化单独提交；只有动作、精度、回放帧数和 D01 门禁均不退化且核心耗时明确下降，才保留该提交，否则使用 `git revert` 回滚。
 - 当前两本循环和计时改动尚未同步到远端，也尚未运行测试或真机验证。
+- Stage 2→3连续任务的fail-closed编排已在`feature/stage23-integration`融合：`5141b82`使部署源仓库自包含，`d8ae9f2`新增`mission_main2.py`、`mission2.py`和对应交接文档，并接入`run.sh --stage23`。当前仍被D01事件帧、录像参考、OCR、竖直书脊/书架感知、粗导航和新资产合同显式阻断；本轮不做真机实验。
 
 ## 当前问题
 

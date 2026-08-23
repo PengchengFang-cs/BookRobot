@@ -16,7 +16,8 @@ FPC 当前基于 FruitTest 的可废弃副本实现 Stage 1 完整任务：到�
 
 允许修改的项目路径只有：
 
-- RTX 5090 本地：`/home/cvailab/fpc`
+- RTX 5090 已验证基线：`/home/cvailab/fpc`
+- RTX 5090 多人最终集成：`/home/cvailab/Ruan/Library_306`
 - Wanda：`/home/unix_ai/fpc`
 
 机器人上的其他目录都是只读参考材料。可以用只读命令检查并把需要的文件复制到上述两个 `fpc` 工作路径中，但不得在原参考路径修改、删除，或递归更改权限、所有权和内容。
@@ -25,7 +26,7 @@ FPC 当前基于 FruitTest 的可废弃副本实现 Stage 1 完整任务：到�
 
 ## 部署与备份
 
-正常部署方向是从 RTX 5090 的 `/home/cvailab/fpc` 通过 `scripts/deploy_to_robot.sh` 直接更新 Wanda 的 `/home/unix_ai/fpc`。部署源可以是本地已提交且没有已跟踪修改的 `main` 或功能分支，脚本只导出当前 `HEAD` 中已经提交的文件。
+正常部署方向是从 RTX 5090 当前选定仓库自身的 `scripts/deploy_to_robot.sh` 直接更新 Wanda 的 `/home/unix_ai/fpc`。脚本按自身位置确定仓库根，因此`/home/cvailab/fpc`和`/home/cvailab/Ruan/Library_306`互不串仓。部署源可以是已提交且没有任何工作树修改或未跟踪文件的`main`或功能分支，脚本只导出当前`HEAD`。
 
 Wanda 的 `/home/unix_ai/fpc` 是普通运行副本，不是 Git 工作树，不需要 clone、pull 或 fast-forward。脚本默认不删除机器人额外的日志、模型、缓存或其他运行文件。服务器地址、用户、目录和命令见 [`INFRASTRUCTURE.md`](INFRASTRUCTURE.md)。
 

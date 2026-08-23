@@ -7,6 +7,13 @@
 - 不记录凭证、密钥或日志原文件；只保留理解项目演进所需的非敏感事实和结论。
 - 本日志记录重要过程，但不替代 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 的当前状态或 [`ROBOT_ISSUES.md`](ROBOT_ISSUES.md) 的永久故障档案。
 
+## 2026-08-23（Asia/Shanghai）
+
+- 将5090`/home/cvailab/Ruan/Library_306`中的Stage 2→3未跟踪交付物收回唯一中心工作区，保留用户原始`Stage23_mission_jh.md`，在`feature/stage23-integration`融合`mission2.py`、`mission_main2.py`和两份接口/交接文档。
+- `5141b82`将`scripts/deploy_to_robot.sh`改为按脚本自身位置确定仓库根，并拒绝任何已跟踪修改或未跟踪文件；因此`/home/cvailab/fpc`与`/home/cvailab/Ruan/Library_306`可以独立导出各自已提交HEAD，不再串用旧硬编码路径。
+- `d8ae9f2`通过`run.sh --stage23`接入Stage 2/3入口并复用书本视觉环境和实验日志。纯逻辑审查补上标签边界校验、目标槽占用拒绝、错层书不参与间距标定、相邻书内侧边缘合同、D01/参考值有效性检查，以及中断退出码和资源清理。
+- 本轮只执行纯逻辑单元测试、Python/shell语法检查；用户明确要求不做真机试验，因此没有部署Wanda、重启服务、调用相机/模型或发送机器人与D01动作。D01事件帧、录像参考、OCR传输、竖直书脊/书架感知、八个粗导航接口和新资产完整合同仍保持显式缺口。
+
 ## 2026-08-20（Asia/Shanghai）
 
 - 用户重新确认 Stage 1 唯一主线：书桌粗导航→多轮视觉对位→Pick DataReplay→后退 `0.20 m`→左转期间每 `15°` 拍摄一次→到 `90°` 后直行到车旁→右转 `90°`→前进 `0.20 m`→托板/槽位与 Place 第 0 帧几何精定位→Place DataReplay。已写入 [`STAGE1_PIPELINE.md`](STAGE1_PIPELINE.md)。
