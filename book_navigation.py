@@ -13,17 +13,25 @@ NAVNAV_ROOT = Path("/home/unix_ai/navnav_final")
 NAVNAV_MODULE = "runtime.wanda_nav_whrc"
 VECTOR_FINAL_YAW_TOLERANCE_RAD = math.radians(0.15)
 VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M = 0.010
+PICK_INITIAL_VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M = 0.040
+ALIGNMENT_ROTATION_SPEED_RAD_S = 0.24
 CART_TURN_CLEARANCE_RETREAT_M = 0.20
 CART_ROUTE_MAX_SEGMENT_M = 0.20
 CART_SCAN_CAPTURE_ANGLES_DEG = (30, 45, 60, 75)
 TABLE_RETURN_SCAN_ANGLES_DEG = (30, 45, 60, 75)
 COARSE_TRANSLATION_SPEED_MPS = 0.5
 CART_COARSE_TRANSLATION_SPEED_MPS = 0.15
+TABLE_COARSE_DRIVE_COMPENSATION_M = 0.06
 COARSE_ROTATION_SPEED_RAD_S = 0.36
 CART_SCAN_ROTATION_SPEED_RAD_S = COARSE_ROTATION_SPEED_RAD_S
 
 
-def _drive_coarse_direct_with_odom(adapter, distance_m):
+def _drive_coarse_direct_with_odom(
+    adapter,
+    distance_m,
+    *,
+    speed_mps=CART_COARSE_TRANSLATION_SPEED_MPS,
+):
     import rclpy
     from geometry_msgs.msg import Twist
 
@@ -36,7 +44,7 @@ def _drive_coarse_direct_with_odom(adapter, distance_m):
     heading_cosine = math.cos(start.yaw)
     heading_sine = math.sin(start.yaw)
     command = Twist()
-    command.linear.x = direction * CART_COARSE_TRANSLATION_SPEED_MPS
+    command.linear.x = direction * float(speed_mps)
     try:
         while rclpy.ok(context=adapter.context):
             pose = adapter.latest_task_pose()
@@ -58,6 +66,15 @@ def _spin_coarse(adapter, angle_rad):
     adapter.correct_absolute_imu_yaw(
         target_yaw_rad=target_yaw,
         maximum_speed_rad_s=COARSE_ROTATION_SPEED_RAD_S,
+    )
+
+
+def _spin_alignment(adapter, angle_rad):
+    start_yaw = adapter.current_absolute_imu_yaw()
+    target_yaw = math.remainder(start_yaw + float(angle_rad), 2.0 * math.pi)
+    adapter.correct_absolute_imu_yaw(
+        target_yaw_rad=target_yaw,
+        maximum_speed_rad_s=ALIGNMENT_ROTATION_SPEED_RAD_S,
     )
 
 
@@ -154,11 +171,18 @@ def _normalize_yaw(value):
     return math.atan2(math.sin(float(value)), math.cos(float(value)))
 
 
-def _build_vector_commands(runtime, reference, observed, epsilon=1e-9):
+def _build_vector_commands(
+    runtime,
+    reference,
+    observed,
+    *,
+    overshoot_compensation_m=VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M,
+    epsilon=1e-9,
+):
     dx = float(observed[0]) - float(reference[0])
     dy = float(observed[1]) - float(reference[1])
     distance = math.hypot(dx, dy)
-    drive_distance = max(0.0, distance - VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M)
+    drive_distance = max(0.0, distance - float(overshoot_compensation_m))
     if drive_distance <= epsilon:
         return ()
     forward_turn = _normalize_yaw(math.atan2(dy, dx))
@@ -215,6 +239,7 @@ class BookAlignmentNavigator:
             raise ValueError("alignment mode must be legacy or vector")
         self.runtime = runtime
         self.mode = mode
+        self._vector_correction_count = 0
 
     def align(self, *, reference, observed):
         if self.runtime is None:
@@ -241,19 +266,43 @@ class BookAlignmentNavigator:
                     torso,
                 )
             else:
+                compensation_m = (
+                    PICK_INITIAL_VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M
+                    if self._vector_correction_count == 0
+                    else VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M
+                )
                 commands = _build_vector_commands(
                     self.runtime,
                     reference,
                     planned_observed,
+                    overshoot_compensation_m=compensation_m,
                 )
+            spin_count = 0
             for command in commands:
-                adapter.execute_command(command, precision_mode=True)
-            if self.mode == "vector" and commands:
+                if (
+                    self.mode == "vector"
+                    and command.kind is self.runtime.WandaCommandKind.SPIN
+                ):
+                    spin_count += 1
+                    if spin_count == 2:
+                        adapter.correct_absolute_imu_yaw(
+                            target_yaw_rad=starting_absolute_yaw,
+                            tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
+                            maximum_speed_rad_s=ALIGNMENT_ROTATION_SPEED_RAD_S,
+                        )
+                    else:
+                        _spin_alignment(adapter, command.value)
+                else:
+                    adapter.execute_command(command, precision_mode=True)
+            if self.mode == "vector" and commands and spin_count == 0:
                 adapter.correct_absolute_imu_yaw(
                     target_yaw_rad=starting_absolute_yaw,
                     tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
+                    maximum_speed_rad_s=ALIGNMENT_ROTATION_SPEED_RAD_S,
                 )
             pose = adapter.current_task_pose()
+            if self.mode == "vector":
+                self._vector_correction_count += 1
             return BookAlignmentExecution(
                 command_count=len(commands),
                 mode=self.mode,
@@ -340,12 +389,16 @@ class CartPlaceDockingNavigator:
                 translation,
             )
             for command in commands:
-                adapter.execute_command(command, precision_mode=True)
+                if command.kind is self.runtime.WandaCommandKind.SPIN:
+                    _spin_alignment(adapter, command.value)
+                else:
+                    adapter.execute_command(command, precision_mode=True)
             yaw_command_count = 0
             if abs(yaw_error) > 1e-9:
                 adapter.correct_absolute_imu_yaw(
                     target_yaw_rad=starting_yaw + yaw_error,
                     tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
+                    maximum_speed_rad_s=ALIGNMENT_ROTATION_SPEED_RAD_S,
                 )
                 yaw_command_count = 1
             pose = adapter.current_task_pose()
@@ -556,11 +609,16 @@ class Stage1TableReturnNavigator:
         from book_alignment import COARSE_APPROACH_REFERENCE_BASE_M
 
         table_leg = float(COARSE_APPROACH_REFERENCE_BASE_M[1]) - point[1]
+        table_drive_distance = math.copysign(
+            max(0.0, abs(table_leg) - TABLE_COARSE_DRIVE_COMPENSATION_M),
+            table_leg,
+        )
         print(
             "[导航] 书桌粗定位: "
             f"选中书本点=({point[0]:.3f}, {point[1]:.3f}, {point[2]:.3f}) m, "
             f"目标Y={COARSE_APPROACH_REFERENCE_BASE_M[1]:.3f} m, "
-            f"直行距离={table_leg:.3f} m"
+            f"计算直行距离={table_leg:.3f} m, "
+            f"减去6cm后执行={table_drive_distance:.3f} m"
         )
         if self.runtime is None:
             self.runtime = load_navnav_runtime()
@@ -586,13 +644,12 @@ class Stage1TableReturnNavigator:
                 commands_sent += 1
             _spin_coarse(adapter, -math.pi / 2.0)
             commands_sent += 1
-            kind = (
-                self.runtime.WandaCommandKind.DRIVE_FORWARD
-                if table_leg >= 0.0
-                else self.runtime.WandaCommandKind.DRIVE_BACKWARD
-            )
-            for command in _distance_commands(self.runtime, kind, abs(table_leg)):
-                adapter.execute_command(command, precision_mode=False)
+            if abs(table_drive_distance) > 1e-9:
+                _drive_coarse_direct_with_odom(
+                    adapter,
+                    table_drive_distance,
+                    speed_mps=COARSE_TRANSLATION_SPEED_MPS,
+                )
                 commands_sent += 1
             _spin_coarse(adapter, math.pi / 2.0)
             commands_sent += 1

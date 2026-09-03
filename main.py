@@ -267,6 +267,8 @@ def run_real(args):
                         **feedback,
                         keep_runtime_open=True,
                     )
+                    replay_module = None
+                    manipulation_was_active = False
                     try:
                         with timed_phase("pick_runtime_initialize"):
                             pick_replayer.initialize()
@@ -297,6 +299,12 @@ def run_real(args):
                                     ).navigate()
                             pick_loaded.result()
                             place_loaded.result()
+                            replay_module = pick_replayer.runtime.module
+                            manipulation_was_active = replay_module._check_service_active(
+                                "manipulation.service"
+                            )
+                            if manipulation_was_active:
+                                replay_module._stop_service("manipulation.service")
                             with timed_phase(
                                 "stage1_two_book_core",
                                 book_count=STAGE1_EXPERIMENT_BOOK_COUNT,
@@ -346,8 +354,14 @@ def run_real(args):
                                                     vision=vision
                                                 ).navigate()
                     finally:
-                        pick_replayer.close()
-                        place_replayer.close()
+                        try:
+                            pick_replayer.close()
+                            place_replayer.close()
+                        finally:
+                            if manipulation_was_active:
+                                replay_module._start_service_and_wait(
+                                    "manipulation.service"
+                                )
             elif args.book_place:
                 from book_place_replay import Stage1BookPlaceReplayer
 
