@@ -169,12 +169,12 @@ SHELF_OBSERVATION_POSE_BY_LEVEL = {
 # A value from DR1.2 or DR2.4 must not be copied into these entries.
 D01_EVENT_FRAME_BY_ASSET = {
     "DR5.1": None,
-    "DR6.4": None,
+    "DR6.4": 344,
     "DR7.1": None,
     "DR8.1": None,
     "DR9.2": None,
     "DR10.1": None,
-    "DR11.2": None,
+    "DR11.2": 0,
 }
 
 # These points must be calibrated from each asset's frame-zero image/depth and
@@ -748,40 +748,90 @@ def align_shelf_target(
 ):
     reference = _point3(PLACE_REFERENCE_POINT_M_BY_ASSET[asset_name])
     reference_yaw = float(PLACE_REFERENCE_YAW_RAD_BY_ASSET[asset_name])
-    final = None
-    for correction_index in range(MAXIMUM_ALIGNMENT_CORRECTIONS + 1):
-        target = observe_shelf_target(vision, ocr_client, label)
+    correction_count = 0
+    target = observe_shelf_target(vision, ocr_client, label)
+
+    while True:
         observed = _point3(target.center_m)
         residual = tuple(observed[index] - reference[index] for index in range(3))
         yaw_error = _normalize_yaw(float(target.yaw_rad) - reference_yaw)
+        say(
+            f"{asset_name} yaw对位 {correction_count}/"
+            f"{MAXIMUM_ALIGNMENT_CORRECTIONS}: "
+            f"yaw={math.degrees(yaw_error):.2f}°"
+        )
+        if abs(yaw_error) <= SHELF_PLACE_YAW_TOLERANCE_RAD:
+            break
+        if correction_count == MAXIMUM_ALIGNMENT_CORRECTIONS:
+            raise RuntimeError(
+                "Place yaw对位未达标，不执行DataReplay: "
+                f"yaw={math.degrees(yaw_error):.2f}°"
+            )
+        navigator.align(ShelfAlignmentCommand(
+            reference_anchor_m=(0.0, 0.0, reference[2]),
+            observed_anchor_m=(0.0, 0.0, reference[2]),
+            residual_m=(0.0, 0.0, residual[2]),
+            yaw_error_rad=yaw_error,
+        ))
+        correction_count += 1
+        target = observe_shelf_target(vision, ocr_client, label)
+
+    while True:
+        observed = _point3(target.center_m)
+        residual = tuple(observed[index] - reference[index] for index in range(3))
+        say(
+            f"{asset_name} 左右对位 {correction_count}/"
+            f"{MAXIMUM_ALIGNMENT_CORRECTIONS}: "
+            f"左右={residual[1]:.3f} m"
+        )
+        if abs(residual[1]) <= SHELF_PLACE_Y_TOLERANCE_M:
+            break
+        if correction_count == MAXIMUM_ALIGNMENT_CORRECTIONS:
+            raise RuntimeError(
+                "Place左右对位未达标，不执行DataReplay: "
+                f"左右={residual[1]:.3f} m"
+            )
+        navigator.align(ShelfAlignmentCommand(
+            reference_anchor_m=(0.0, reference[1], reference[2]),
+            observed_anchor_m=(0.0, observed[1], reference[2]),
+            residual_m=(0.0, residual[1], residual[2]),
+            yaw_error_rad=0.0,
+        ))
+        correction_count += 1
+        target = observe_shelf_target(vision, ocr_client, label)
+
+    set_shelf_observation_pose(vision, navigator, label.level, say=say)
+    target = observe_shelf_target(vision, ocr_client, label)
+
+    while True:
+        observed = _point3(target.center_m)
+        residual = tuple(observed[index] - reference[index] for index in range(3))
         final = ShelfAlignmentCommand(
             reference_anchor_m=reference,
             observed_anchor_m=observed,
             residual_m=residual,
-            yaw_error_rad=yaw_error,
+            yaw_error_rad=_normalize_yaw(float(target.yaw_rad) - reference_yaw),
         )
         say(
-            f"{asset_name} Place精定位 "
-            f"{correction_index}/{MAXIMUM_ALIGNMENT_CORRECTIONS}: "
-            f"前后={residual[0]:.3f} m, 左右={residual[1]:.3f} m, "
-            f"Z记录={residual[2]:.3f} m, yaw={math.degrees(yaw_error):.2f}°"
+            f"{asset_name} 前后对位 {correction_count}/"
+            f"{MAXIMUM_ALIGNMENT_CORRECTIONS}: "
+            f"前后={residual[0]:.3f} m, Z记录={residual[2]:.3f} m"
         )
-        within = (
-            abs(residual[0]) <= SHELF_PLACE_X_TOLERANCE_M
-            and abs(residual[1]) <= SHELF_PLACE_Y_TOLERANCE_M
-            and abs(yaw_error) <= SHELF_PLACE_YAW_TOLERANCE_RAD
-        )
-        if within:
+        if abs(residual[0]) <= SHELF_PLACE_X_TOLERANCE_M:
             return final
-        if correction_index == MAXIMUM_ALIGNMENT_CORRECTIONS:
-            break
-        navigator.align(final)
-    raise RuntimeError(
-        "Place最终对位未达标，不执行DataReplay: "
-        f"前后={final.residual_m[0]:.3f} m, "
-        f"左右={final.residual_m[1]:.3f} m, "
-        f"yaw={math.degrees(final.yaw_error_rad):.2f}°"
-    )
+        if correction_count == MAXIMUM_ALIGNMENT_CORRECTIONS:
+            raise RuntimeError(
+                "Place前后对位未达标，不执行DataReplay: "
+                f"前后={residual[0]:.3f} m"
+            )
+        navigator.align(ShelfAlignmentCommand(
+            reference_anchor_m=(reference[0], 0.0, reference[2]),
+            observed_anchor_m=(observed[0], 0.0, reference[2]),
+            residual_m=(residual[0], 0.0, residual[2]),
+            yaw_error_rad=0.0,
+        ))
+        correction_count += 1
+        target = observe_shelf_target(vision, ocr_client, label)
 
 
 def run_stage2(
@@ -824,12 +874,6 @@ def run_stage2(
         )
 
         navigate_cart_to_shelf(vision, ocr_client, label)
-        set_shelf_observation_pose(
-            vision,
-            place_navigator,
-            label.level,
-            say=say,
-        )
         align_shelf_target(
             vision,
             ocr_client,
