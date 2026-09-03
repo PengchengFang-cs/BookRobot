@@ -21,6 +21,35 @@ TABLE_RETURN_SCAN_ANGLES_DEG = (30, 45, 60, 75)
 COARSE_TRANSLATION_SPEED_MPS = 0.5
 
 
+def _drive_coarse_direct_with_odom(adapter, distance_m):
+    import rclpy
+    from geometry_msgs.msg import Twist
+
+    signed_distance = float(distance_m)
+    target_distance = abs(signed_distance)
+    if target_distance <= 1e-9:
+        return
+    direction = 1.0 if signed_distance > 0.0 else -1.0
+    start = adapter.current_task_pose()
+    heading_cosine = math.cos(start.yaw)
+    heading_sine = math.sin(start.yaw)
+    command = Twist()
+    command.linear.x = direction * COARSE_TRANSLATION_SPEED_MPS
+    try:
+        while rclpy.ok(context=adapter.context):
+            pose = adapter.latest_task_pose()
+            travelled = direction * (
+                (pose.x - start.x) * heading_cosine
+                + (pose.y - start.y) * heading_sine
+            )
+            if travelled >= target_distance:
+                return
+            adapter._zero_velocity_publisher.publish(command)
+            rclpy.spin_once(adapter, timeout_sec=0.02)
+    finally:
+        adapter._publish_zero_velocity()
+
+
 @dataclass(frozen=True)
 class BookAlignmentExecution:
     command_count: int
@@ -374,11 +403,6 @@ class Stage1CartNavigator:
             # The chassis is already turned left by 90 degrees, so a straight
             # drive now executes the required Y displacement.
             lateral_delta = float(cart_target_point[1]) - float(pose.y)
-            lateral_kind = (
-                self.runtime.WandaCommandKind.DRIVE_FORWARD
-                if lateral_delta >= 0.0
-                else self.runtime.WandaCommandKind.DRIVE_BACKWARD
-            )
             print(
                 "[导航] 推车粗定位（书本坐标系）: "
                 f"target_x={cart_target_point[0]:.3f} m, "
@@ -386,12 +410,7 @@ class Stage1CartNavigator:
                 f"move_y={lateral_delta:.3f} m"
             )
             if abs(lateral_delta) > 1e-9:
-                command = self.runtime.MappedMotionCommand(
-                    lateral_kind,
-                    abs(lateral_delta),
-                    "XY",
-                )
-                adapter.execute_command(command, precision_mode=False)
+                _drive_coarse_direct_with_odom(adapter, lateral_delta)
                 commands_sent += 1
 
             return_turn = self.runtime.MappedMotionCommand(
