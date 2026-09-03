@@ -415,21 +415,10 @@ def _stable_cart_place_target(
     for cart in carts:
         if cart is None or cart.platform is None:
             continue
-        cart_bodies = [
-            observation
-            for observation in cart.observations
-            if observation.semantic_class == "cart_body"
-        ]
-        if not cart_bodies:
-            continue
-        cart_body = max(cart_bodies, key=lambda observation: observation.confidence)
         targets.append(build_cart_place_alignment_target(
             platform=cart.platform,
             replay_reference=replay_reference,
             slot_index=slot_index,
-            observed_cart_bbox_width_ratio=(
-                float(cart_body.bbox[2]) / float(cart_body.image_width)
-            ),
         ))
     if not targets:
         raise RuntimeError("没有检测到可用于 Place 对位的小推车托板")

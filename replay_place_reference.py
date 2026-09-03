@@ -8,7 +8,7 @@ import h5py
 import numpy as np
 
 from book_geometry import CameraIntrinsics, decode_bbox_rle
-from cart_geometry import reconstruct_cart_top_platform
+from cart_geometry import reconstruct_cart_marker_platform
 from geometry import camera_point_to_base
 from replay_pick_reference import scale_intrinsics
 
@@ -28,7 +28,6 @@ class ReplayPlaceReference:
     platform_width_m: float
     platform_depth_m: float
     recorded_book_offset_from_left_m: float
-    recorded_cart_bbox_width_ratio: float
 
 
 def _mask_center_base(observation, depth_m, intrinsics, transform):
@@ -116,8 +115,9 @@ def calibrate_replay_place_reference(
             if observation.semantic_class != "cart_body":
                 continue
             try:
-                candidates.append(reconstruct_cart_top_platform(
+                candidates.append(reconstruct_cart_marker_platform(
                     observation=observation,
+                    color_bgr=np.ascontiguousarray(rgb[:, :, ::-1]),
                     depth_m=depth,
                     intrinsics=intrinsics,
                     camera_to_base=transform,
@@ -162,14 +162,6 @@ def calibrate_replay_place_reference(
         offset_from_left = float(np.dot(left - book_center, lateral))
 
     reference_platform = platforms[int(reference_frame_index)]
-    reference_cart = max(
-        (
-            observation
-            for observation in observations_by_frame[int(reference_frame_index)]
-            if observation.semantic_class == "cart_body"
-        ),
-        key=lambda observation: observation.confidence,
-    )
     _reference_rgb, _depth, reference_torso, reference_head = frames[
         int(reference_frame_index)
     ]
@@ -187,9 +179,6 @@ def calibrate_replay_place_reference(
         platform_width_m=float(reference_platform.lateral_extent_m),
         platform_depth_m=float(reference_platform.depth_extent_m),
         recorded_book_offset_from_left_m=offset_from_left,
-        recorded_cart_bbox_width_ratio=(
-            float(reference_cart.bbox[2]) / float(reference_cart.image_width)
-        ),
     )
 
 
@@ -219,7 +208,6 @@ def load_replay_place_reference(path):
         "platform_width_m",
         "platform_depth_m",
         "recorded_book_offset_from_left_m",
-        "recorded_cart_bbox_width_ratio",
     ):
         payload[name] = float(payload[name])
     payload["reference_frame_index"] = int(payload["reference_frame_index"])

@@ -16,6 +16,7 @@ VECTOR_FINAL_YAW_TOLERANCE_RAD = math.radians(0.15)
 VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M = 0.010
 PICK_INITIAL_VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M = 0.030
 ALIGNMENT_ROTATION_SPEED_RAD_S = 0.24
+CART_TURN_CLEARANCE_RETREAT_M = 0.20
 CART_SCAN_CAPTURE_ANGLES_DEG = (45, 60)
 TABLE_RETURN_SCAN_ANGLES_DEG = (45, 60)
 COARSE_TRANSLATION_SPEED_MPS = 0.5
@@ -446,6 +447,16 @@ class Stage1CartNavigator:
             adapter.preflight()
             starting_yaw = adapter.current_absolute_imu_yaw()
             adapter.capture_task_origin()
+            if not self.scan_only:
+                adapter.execute_command(
+                    self.runtime.MappedMotionCommand(
+                        self.runtime.WandaCommandKind.DRIVE_BACKWARD,
+                        CART_TURN_CLEARANCE_RETREAT_M,
+                        "XY",
+                    ),
+                    precision_mode=False,
+                )
+                commands_sent += 1
             detections = []
             with ThreadPoolExecutor(max_workers=1) as detector:
                 def submit_capture(capture_pose, capture):
@@ -544,6 +555,16 @@ class Stage1CartNavigator:
                 commands_sent += 1
 
             _spin_coarse(adapter, -math.pi / 2.0)
+            commands_sent += 1
+
+            adapter.execute_command(
+                self.runtime.MappedMotionCommand(
+                    self.runtime.WandaCommandKind.DRIVE_FORWARD,
+                    CART_TURN_CLEARANCE_RETREAT_M,
+                    "XY",
+                ),
+                precision_mode=False,
+            )
             commands_sent += 1
 
             adapter.correct_absolute_imu_yaw(
