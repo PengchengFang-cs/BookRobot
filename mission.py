@@ -21,11 +21,12 @@ from config import SCAN_ANGLE_RAD, SCAN_COUNT
 
 
 BOOK_ALIGNMENT_X_TOLERANCE_M = 0.030
-BOOK_ALIGNMENT_Y_TOLERANCE_M = 0.010
+BOOK_ALIGNMENT_Y_TOLERANCE_M = 0.020
 BOOK_VISION_SUCCESSFUL_SAMPLES = 1
 BOOK_VISION_MAXIMUM_ATTEMPTS = 1
 BOOK_ALIGNMENT_MAXIMUM_CORRECTIONS = 3
-CART_PLACE_X_TOLERANCE_M = 0.030
+CART_PLACE_X_TOLERANCE_M = 0.020
+CART_PLACE_FINAL_X_TOLERANCE_M = 0.030
 CART_PLACE_Y_TOLERANCE_M = 0.020
 CART_PLACE_YAW_TOLERANCE_RAD = 5.0 * 3.141592653589793 / 180.0
 CART_PLACE_MAXIMUM_CORRECTIONS = 3
@@ -425,9 +426,14 @@ def _stable_cart_place_target(
     return median_cart_place_alignment_target(targets)
 
 
-def _cart_place_within_tolerance(target):
+def _cart_place_within_tolerance(target, *, final_attempt=False):
+    x_tolerance = (
+        CART_PLACE_FINAL_X_TOLERANCE_M
+        if final_attempt
+        else CART_PLACE_X_TOLERANCE_M
+    )
     return (
-        abs(target.residual_m[0]) <= CART_PLACE_X_TOLERANCE_M
+        abs(target.residual_m[0]) <= x_tolerance
         and abs(target.residual_m[1]) <= CART_PLACE_Y_TOLERANCE_M
         and abs(target.yaw_error_rad) <= CART_PLACE_YAW_TOLERANCE_RAD
     )
@@ -528,9 +534,13 @@ def run_cart_place_alignment_once(
             f"左右={target.residual_m[1]:.3f} m, "
             f"yaw={target.yaw_error_rad * 180.0 / 3.141592653589793:.2f}°"
         )
-        if _cart_place_within_tolerance(target):
+        final_attempt = correction_index == CART_PLACE_MAXIMUM_CORRECTIONS
+        if _cart_place_within_tolerance(
+            target,
+            final_attempt=final_attempt,
+        ):
             return CartPlaceAlignmentRun(first, target, last_navigation, True)
-        if correction_index == CART_PLACE_MAXIMUM_CORRECTIONS:
+        if final_attempt:
             return CartPlaceAlignmentRun(first, target, last_navigation, False)
         with timed_phase(
             "place_alignment_motion",

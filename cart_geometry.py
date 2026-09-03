@@ -412,7 +412,7 @@ def reconstruct_cart_marker_platform(
     depth_m,
     intrinsics,
     camera_to_base: Callable[[tuple[float, float, float]], Sequence[float]],
-    slot_offsets_from_left_m=(0.17, 0.24, 0.31, 0.38, 0.45),
+    slot_offsets_from_left_m=(0.20, 0.35, 0.50),
     platform_width_m=0.75,
     platform_depth_m=0.29,
     marker_size_m=0.018,
