@@ -18,8 +18,9 @@ CART_ROUTE_MAX_SEGMENT_M = 0.20
 CART_SCAN_CAPTURE_ANGLES_DEG = (30, 45, 60, 75)
 TABLE_RETURN_SCAN_ANGLES_DEG = (30, 45, 60, 75)
 COARSE_TRANSLATION_SPEED_MPS = 0.5
+CART_COARSE_TRANSLATION_SPEED_MPS = 0.15
 COARSE_ROTATION_SPEED_RAD_S = 0.36
-CART_SCAN_ROTATION_SPEED_RAD_S = 0.12
+CART_SCAN_ROTATION_SPEED_RAD_S = COARSE_ROTATION_SPEED_RAD_S
 
 
 def _drive_coarse_direct_with_odom(adapter, distance_m):
@@ -35,7 +36,7 @@ def _drive_coarse_direct_with_odom(adapter, distance_m):
     heading_cosine = math.cos(start.yaw)
     heading_sine = math.sin(start.yaw)
     command = Twist()
-    command.linear.x = direction * COARSE_TRANSLATION_SPEED_MPS
+    command.linear.x = direction * CART_COARSE_TRANSLATION_SPEED_MPS
     try:
         while rclpy.ok(context=adapter.context):
             pose = adapter.latest_task_pose()
@@ -383,8 +384,8 @@ class Stage1CartNavigator:
         if self.runtime is None:
             self.runtime = load_navnav_runtime()
         adapter = self.runtime.WandaRos2Adapter()
-        adapter._linear_speed = COARSE_TRANSLATION_SPEED_MPS
-        adapter._backup_speed = COARSE_TRANSLATION_SPEED_MPS
+        adapter._linear_speed = CART_COARSE_TRANSLATION_SPEED_MPS
+        adapter._backup_speed = CART_COARSE_TRANSLATION_SPEED_MPS
         return self._navigate_with_cart_scan(adapter)
 
     def _navigate_with_cart_scan(self, adapter):

@@ -67,6 +67,13 @@ class CapturedCartFrame:
     scan_angle_deg: int
 
 
+@dataclass(frozen=True)
+class CapturedBookFrame:
+    snapshot: object
+    joints: dict
+    scan_angle_deg: int
+
+
 class Vision:
     def __init__(self, node, tf_buffer, book_client=None):
         self.node = node
@@ -223,20 +230,108 @@ class Vision:
         raise RuntimeError("头部没有到达书桌扫描角度")
 
     def scan_books_to_robot_right(self, angles_deg=(30, 45, 60, 75)):
-        """Scan toward the table without rotating the chassis."""
+        """Capture books while the head turns continuously toward the table."""
 
-        books = []
+        angles_deg = tuple(int(angle) for angle in angles_deg)
+        if not angles_deg:
+            return ()
+        message = Float64MultiArray()
+        message.data = [-np.deg2rad(float(max(angles_deg))), 0.25]
+        captures = []
         try:
             for angle_deg in angles_deg:
-                self.set_head_pose(yaw_rad=-np.deg2rad(float(angle_deg)))
-                detected = self.find("book", frame="base_link")
-                if detected:
-                    books.extend(detected)
+                target_yaw = -np.deg2rad(float(angle_deg))
+                deadline = time.monotonic() + 3.0
+                while rclpy.ok() and time.monotonic() < deadline:
+                    self.head_command_pub.publish(message)
+                    rclpy.spin_once(self.node, timeout_sec=0.02)
+                    if self.joints.get("joint_head0", 99.0) <= target_yaw + 0.02:
+                        capture = self.capture_book_frame(
+                            scan_angle_deg=angle_deg,
+                            keep_moving=lambda: self.head_command_pub.publish(message),
+                        )
+                        if capture is not None:
+                            captures.append(capture)
+                        break
         finally:
             self.set_head_pose(yaw_rad=0.0)
+        return self.detect_book_frames_queued(captures)
+
+    def capture_book_frame(
+        self,
+        *,
+        scan_angle_deg,
+        timeout_s=3.0,
+        keep_moving=None,
+    ):
+        """Capture one synchronized RGB-D book frame without calling the 5090."""
+
+        started = time.monotonic()
+        deadline = started + float(timeout_s)
+        needed_joints = ("body_joint", "joint_head0", "joint_head1")
+        while rclpy.ok() and time.monotonic() < deadline:
+            if keep_moving is not None:
+                keep_moving()
+            rclpy.spin_once(self.node, timeout_sec=0.02)
+            selected = self.sensor_sync.select(
+                arrived_after_s=started,
+                captured_after_ns=self.last_capture_ns,
+                required_joints=needed_joints,
+            )
+            if selected is None:
+                continue
+            snapshot, joints = selected
+            self.last_capture_ns = snapshot.captured_at_ns
+            raw_color = self.bridge.imgmsg_to_cv2(
+                snapshot.color,
+                desired_encoding="bgr8",
+            )
+            raw_path = self._record_path(
+                f"book_scan_{int(scan_angle_deg):03d}_raw"
+            ) or self.debug_path.with_name(
+                f"book_raw_{int(scan_angle_deg):03d}.jpg"
+            )
+            cv2.imwrite(str(raw_path), raw_color)
+            return CapturedBookFrame(
+                snapshot=snapshot,
+                joints=dict(joints),
+                scan_angle_deg=int(scan_angle_deg),
+            )
+        return None
+
+    def detect_book_frames_queued(self, frames):
+        """Process captured book frames in order after the head returns."""
+
+        books = []
+        for frame in frames:
+            try:
+                detected = self._detect_once(
+                    frame.snapshot,
+                    frame.joints,
+                    rpc_captured_at_ns=time.time_ns(),
+                    record_label=f"book_scan_{frame.scan_angle_deg:03d}",
+                    record_raw=False,
+                )
+                if detected is None:
+                    continue
+                rows, _captured_at_ns = detected
+                for row in rows:
+                    point = tuple(float(value) for value in row.geometry.suction_point)
+                    books.append(LocatedBook(
+                        observation=row.observation,
+                        geometry=row.geometry,
+                        frame_id="base_link",
+                        suction_point=point,
+                    ))
+            except Exception as error:
+                self.node.get_logger().warning(f"书本扫描帧不能用: {error}")
+                print(
+                    "[视觉] 书本扫描帧不能用: "
+                    f"{type(error).__name__}: {error}"
+                )
         return tuple(books)
 
-    def _save_debug_overlay(self, color, books, project):
+    def _save_debug_overlay(self, color, books, project, *, record_label="book"):
         overlay = color.copy()
         colors = (
             (0, 220, 0),
@@ -295,9 +390,17 @@ class Vision:
                 2,
             )
         cv2.imwrite(str(self.debug_path), color)
-        self._save_record_image("book_overlay", color)
+        self._save_record_image(f"{record_label}_overlay", color)
 
-    def _detect_once(self, snapshot, joints):
+    def _detect_once(
+        self,
+        snapshot,
+        joints,
+        *,
+        rpc_captured_at_ns=None,
+        record_label="book",
+        record_raw=True,
+    ):
         color, depth = self._snapshot_arrays(snapshot)
         if color is None:
             return None
@@ -306,7 +409,8 @@ class Vision:
         head_yaw = joints["joint_head0"]
         head_pitch = joints["joint_head1"]
         captured_at_ns = snapshot.captured_at_ns
-        self._save_record_image("book_raw", color)
+        if record_raw:
+            self._save_record_image(f"{record_label}_raw", color)
 
         intrinsics = CameraIntrinsics(
             fx=float(snapshot.info.k[0]),
@@ -323,7 +427,11 @@ class Vision:
             camera_to_base=lambda point: camera_point_to_base(
                 point, body, head_yaw, head_pitch
             ),
-            captured_at_ns=captured_at_ns,
+            captured_at_ns=(
+                captured_at_ns
+                if rpc_captured_at_ns is None
+                else int(rpc_captured_at_ns)
+            ),
             base_motion_epoch=f"fruittest-base-capture-{captured_at_ns}",
             head_motion_epoch=f"fruittest-head-capture-{captured_at_ns}",
         )
@@ -339,6 +447,7 @@ class Vision:
                 head_pitch=head_pitch,
                 intrinsics=intrinsics,
             ),
+            record_label=record_label,
         )
         return books, captured_at_ns
 
