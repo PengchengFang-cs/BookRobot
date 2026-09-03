@@ -588,13 +588,21 @@ class Vision:
         record_path = self._save_record_image(f"{record_label}_overlay", color)
         return record_path or debug_path
 
-    def capture_cart_frame(self, *, scan_angle_deg, timeout_s=3.0):
+    def capture_cart_frame(
+        self,
+        *,
+        scan_angle_deg,
+        timeout_s=3.0,
+        keep_moving=None,
+    ):
         """Capture one synchronized RGB-D frame without calling the 5090."""
 
         started = time.monotonic()
         deadline = started + float(timeout_s)
         needed_joints = ("body_joint", "joint_head0", "joint_head1")
         while rclpy.ok() and time.monotonic() < deadline:
+            if keep_moving is not None:
+                keep_moving()
             rclpy.spin_once(self.node, timeout_sec=0.10)
             selected = self.sensor_sync.select(
                 arrived_after_s=started,

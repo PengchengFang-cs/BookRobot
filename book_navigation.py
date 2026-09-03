@@ -5,6 +5,7 @@ import importlib
 import math
 from pathlib import Path
 import sys
+import time
 from types import SimpleNamespace
 
 
@@ -14,11 +15,11 @@ VECTOR_FINAL_YAW_TOLERANCE_RAD = math.radians(0.15)
 VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M = 0.010
 CART_TURN_CLEARANCE_RETREAT_M = 0.20
 CART_ROUTE_MAX_SEGMENT_M = 0.20
-CART_SCAN_STEP_RAD = math.radians(15.0)
-CART_SCAN_STEPS = 6
-CART_SCAN_CAPTURE_ANGLES_DEG = (30, 45, 60)
+CART_SCAN_CAPTURE_ANGLES_DEG = (30, 45, 60, 75)
 TABLE_RETURN_SCAN_ANGLES_DEG = (30, 45, 60, 75)
 COARSE_TRANSLATION_SPEED_MPS = 0.5
+COARSE_ROTATION_SPEED_RAD_S = 0.36
+CART_SCAN_ROTATION_SPEED_RAD_S = 0.12
 
 
 def _drive_coarse_direct_with_odom(adapter, distance_m):
@@ -44,6 +45,69 @@ def _drive_coarse_direct_with_odom(adapter, distance_m):
             )
             if travelled >= target_distance:
                 return
+            adapter._zero_velocity_publisher.publish(command)
+            rclpy.spin_once(adapter, timeout_sec=0.02)
+    finally:
+        adapter._publish_zero_velocity()
+
+
+def _spin_coarse(adapter, angle_rad):
+    start_yaw = adapter.current_absolute_imu_yaw()
+    target_yaw = math.remainder(start_yaw + float(angle_rad), 2.0 * math.pi)
+    adapter.correct_absolute_imu_yaw(
+        target_yaw_rad=target_yaw,
+        maximum_speed_rad_s=COARSE_ROTATION_SPEED_RAD_S,
+    )
+
+
+def _scan_cart_while_turning(adapter, vision):
+    import rclpy
+    from geometry_msgs.msg import Twist
+
+    start = adapter.current_task_pose()
+    target_yaw = start.yaw + math.pi / 2.0
+    capture_angles = iter(CART_SCAN_CAPTURE_ANGLES_DEG)
+    next_capture_angle = next(capture_angles, None)
+    captures = []
+    command = Twist()
+    stable_since = None
+    try:
+        while rclpy.ok(context=adapter.context):
+            pose = adapter.latest_task_pose()
+            turned_rad = math.remainder(pose.yaw - start.yaw, 2.0 * math.pi)
+            turned_deg = math.degrees(turned_rad)
+            if (
+                next_capture_angle is not None
+                and turned_deg >= next_capture_angle
+            ):
+                capture = vision.capture_cart_frame(
+                    scan_angle_deg=next_capture_angle,
+                    keep_moving=lambda: adapter._zero_velocity_publisher.publish(
+                        command
+                    ),
+                )
+                if capture is not None:
+                    adapter._zero_velocity_publisher.publish(command)
+                    rclpy.spin_once(adapter, timeout_sec=0.02)
+                    pose = adapter.latest_task_pose()
+                    captures.append((pose, capture))
+                next_capture_angle = next(capture_angles, None)
+            yaw_error = math.remainder(target_yaw - pose.yaw, 2.0 * math.pi)
+            if abs(yaw_error) <= math.radians(1.0):
+                command.angular.z = 0.0
+                now = time.monotonic()
+                stable_since = now if stable_since is None else stable_since
+                if now - stable_since >= 0.5:
+                    return captures
+            else:
+                stable_since = None
+                command.angular.z = math.copysign(
+                    min(
+                        CART_SCAN_ROTATION_SPEED_RAD_S,
+                        max(0.04, abs(yaw_error) * 0.8),
+                    ),
+                    yaw_error,
+                )
             adapter._zero_velocity_publisher.publish(command)
             rclpy.spin_once(adapter, timeout_sec=0.02)
     finally:
@@ -318,23 +382,8 @@ class Stage1CartNavigator:
                 adapter.execute_command(retreat, precision_mode=False)
                 commands_sent += 1
 
-            for step in range(1, CART_SCAN_STEPS + 1):
-                adapter.refresh_feedback()
-                turn = self.runtime.MappedMotionCommand(
-                    self.runtime.WandaCommandKind.SPIN,
-                    CART_SCAN_STEP_RAD,
-                    "Y",
-                )
-                adapter.execute_command(turn, precision_mode=True)
-                commands_sent += 1
-                pose = adapter.current_task_pose()
-                scan_angle_deg = step * 15
-                if scan_angle_deg in CART_SCAN_CAPTURE_ANGLES_DEG:
-                    capture = self.vision.capture_cart_frame(
-                        scan_angle_deg=scan_angle_deg,
-                    )
-                    if capture is not None:
-                        captures.append((pose, capture))
+            captures.extend(_scan_cart_while_turning(adapter, self.vision))
+            commands_sent += 1
 
             carts = self.vision.detect_cart_frames_queued(
                 capture for _pose, capture in captures
@@ -413,12 +462,7 @@ class Stage1CartNavigator:
                 _drive_coarse_direct_with_odom(adapter, lateral_delta)
                 commands_sent += 1
 
-            return_turn = self.runtime.MappedMotionCommand(
-                self.runtime.WandaCommandKind.SPIN,
-                -math.pi / 2.0,
-                "Y",
-            )
-            adapter.execute_command(return_turn, precision_mode=True)
+            _spin_coarse(adapter, -math.pi / 2.0)
             commands_sent += 1
 
             # The route started by backing exactly 20 cm away from the Pick
@@ -514,17 +558,11 @@ class Stage1TableReturnNavigator:
                         "XY",
                     )
                 )
-            route.append(
-                self.runtime.MappedMotionCommand(
-                    self.runtime.WandaCommandKind.SPIN, -math.pi / 2.0, "Y"
-                )
-            )
             for command in route:
-                adapter.execute_command(
-                    command,
-                    precision_mode=(command.kind is self.runtime.WandaCommandKind.SPIN),
-                )
+                adapter.execute_command(command, precision_mode=False)
                 commands_sent += 1
+            _spin_coarse(adapter, -math.pi / 2.0)
+            commands_sent += 1
             kind = (
                 self.runtime.WandaCommandKind.DRIVE_FORWARD
                 if table_leg >= 0.0
@@ -533,23 +571,16 @@ class Stage1TableReturnNavigator:
             for command in _distance_commands(self.runtime, kind, abs(table_leg)):
                 adapter.execute_command(command, precision_mode=False)
                 commands_sent += 1
-            finish = [
-                self.runtime.MappedMotionCommand(
-                    self.runtime.WandaCommandKind.SPIN, math.pi / 2.0, "Y"
-                )
-            ]
+            _spin_coarse(adapter, math.pi / 2.0)
+            commands_sent += 1
             if self.retreat_before_turn:
-                finish.append(
+                adapter.execute_command(
                     self.runtime.MappedMotionCommand(
                         self.runtime.WandaCommandKind.DRIVE_FORWARD,
                         CART_TURN_CLEARANCE_RETREAT_M,
                         "XY",
-                    )
-                )
-            for command in finish:
-                adapter.execute_command(
-                    command,
-                    precision_mode=(command.kind is self.runtime.WandaCommandKind.SPIN),
+                    ),
+                    precision_mode=False,
                 )
                 commands_sent += 1
             adapter.correct_absolute_imu_yaw(
