@@ -1,5 +1,6 @@
 """Thin adapter around the robot's deployed navnav_final alignment commands."""
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import importlib
 import math
@@ -13,12 +14,10 @@ NAVNAV_ROOT = Path("/home/unix_ai/navnav_final")
 NAVNAV_MODULE = "runtime.wanda_nav_whrc"
 VECTOR_FINAL_YAW_TOLERANCE_RAD = math.radians(0.15)
 VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M = 0.010
-PICK_INITIAL_VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M = 0.040
+PICK_INITIAL_VECTOR_DRIVE_OVERSHOOT_COMPENSATION_M = 0.030
 ALIGNMENT_ROTATION_SPEED_RAD_S = 0.24
-CART_TURN_CLEARANCE_RETREAT_M = 0.20
-CART_ROUTE_MAX_SEGMENT_M = 0.20
-CART_SCAN_CAPTURE_ANGLES_DEG = (30, 45, 60, 75)
-TABLE_RETURN_SCAN_ANGLES_DEG = (30, 45, 60, 75)
+CART_SCAN_CAPTURE_ANGLES_DEG = (45, 60)
+TABLE_RETURN_SCAN_ANGLES_DEG = (45, 60)
 COARSE_TRANSLATION_SPEED_MPS = 0.5
 CART_COARSE_TRANSLATION_SPEED_MPS = 0.15
 TABLE_COARSE_DRIVE_COMPENSATION_M = 0.06
@@ -78,7 +77,7 @@ def _spin_alignment(adapter, angle_rad):
     )
 
 
-def _scan_cart_while_turning(adapter, vision):
+def _scan_cart_while_turning(adapter, vision, *, on_capture):
     import rclpy
     from geometry_msgs.msg import Twist
 
@@ -86,7 +85,6 @@ def _scan_cart_while_turning(adapter, vision):
     target_yaw = start.yaw + math.pi / 2.0
     capture_angles = iter(CART_SCAN_CAPTURE_ANGLES_DEG)
     next_capture_angle = next(capture_angles, None)
-    captures = []
     command = Twist()
     stable_since = None
     try:
@@ -108,7 +106,7 @@ def _scan_cart_while_turning(adapter, vision):
                     adapter._zero_velocity_publisher.publish(command)
                     rclpy.spin_once(adapter, timeout_sec=0.02)
                     pose = adapter.latest_task_pose()
-                    captures.append((pose, capture))
+                    on_capture(pose, capture)
                 next_capture_angle = next(capture_angles, None)
             yaw_error = math.remainder(target_yaw - pose.yaw, 2.0 * math.pi)
             if abs(yaw_error) <= math.radians(1.0):
@@ -116,7 +114,7 @@ def _scan_cart_while_turning(adapter, vision):
                 now = time.monotonic()
                 stable_since = now if stable_since is None else stable_since
                 if now - stable_since >= 0.5:
-                    return captures
+                    return
             else:
                 stable_since = None
                 command.angular.z = math.copysign(
@@ -444,27 +442,34 @@ class Stage1CartNavigator:
     def _navigate_with_cart_scan(self, adapter):
         commands_sent = 0
         candidates = []
-        captures = []
         try:
             adapter.preflight()
             starting_yaw = adapter.current_absolute_imu_yaw()
             adapter.capture_task_origin()
-            if not self.scan_only:
-                retreat = self.runtime.MappedMotionCommand(
-                    self.runtime.WandaCommandKind.DRIVE_BACKWARD,
-                    CART_TURN_CLEARANCE_RETREAT_M,
-                    "XY",
+            detections = []
+            with ThreadPoolExecutor(max_workers=1) as detector:
+                def submit_capture(capture_pose, capture):
+                    detections.append(
+                        (
+                            capture_pose,
+                            capture,
+                            detector.submit(
+                                self.vision.detect_cart_frames_queued,
+                                (capture,),
+                            ),
+                        )
+                    )
+
+                _scan_cart_while_turning(
+                    adapter,
+                    self.vision,
+                    on_capture=submit_capture,
                 )
-                adapter.execute_command(retreat, precision_mode=False)
                 commands_sent += 1
 
-            captures.extend(_scan_cart_while_turning(adapter, self.vision))
-            commands_sent += 1
-
-            carts = self.vision.detect_cart_frames_queued(
-                capture for _pose, capture in captures
-            )
-            for (capture_pose, _capture), cart in zip(captures, carts):
+            for capture_pose, _capture, detection in detections:
+                carts = detection.result()
+                cart = carts[0] if carts else None
                 if cart is None or cart.body_target is None:
                     continue
                 cart_target = transform_cart_body_target_to_origin(
@@ -541,27 +546,10 @@ class Stage1CartNavigator:
             _spin_coarse(adapter, -math.pi / 2.0)
             commands_sent += 1
 
-            # The route started by backing exactly 20 cm away from the Pick
-            # replay endpoint. After completing the Y leg and restoring yaw,
-            # move forward by the same 20 cm. This finishes coarse navigation;
-            # precise docking belongs to shelf/DataReplay geometry, not the
-            # cart-body center used above to estimate the long Y leg.
-            forward_delta = CART_TURN_CLEARANCE_RETREAT_M
-            print(
-                "[导航] 推车粗定位（书本坐标系）: "
-                f"restore_x={forward_delta:.3f} m; 粗导航完成"
-            )
-            for command in _distance_commands(
-                self.runtime,
-                self.runtime.WandaCommandKind.DRIVE_FORWARD,
-                forward_delta,
-            ):
-                adapter.execute_command(command, precision_mode=False)
-                commands_sent += 1
-
             adapter.correct_absolute_imu_yaw(
                 target_yaw_rad=starting_yaw,
                 tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
+                maximum_speed_rad_s=COARSE_ROTATION_SPEED_RAD_S,
             )
 
             pose = adapter.current_task_pose()
@@ -585,10 +573,9 @@ class Stage1CartNavigator:
 class Stage1TableReturnNavigator:
     """Return from the cart to the table using the inverse right-angle route."""
 
-    def __init__(self, runtime=None, *, vision=None, retreat_before_turn=True):
+    def __init__(self, runtime=None, *, vision=None):
         self.runtime = runtime
         self.vision = vision
-        self.retreat_before_turn = bool(retreat_before_turn)
 
     def navigate(self):
         if self.vision is None:
@@ -630,18 +617,6 @@ class Stage1TableReturnNavigator:
             adapter.preflight()
             starting_yaw = adapter.current_absolute_imu_yaw()
             adapter.capture_task_origin()
-            route = []
-            if self.retreat_before_turn:
-                route.append(
-                    self.runtime.MappedMotionCommand(
-                        self.runtime.WandaCommandKind.DRIVE_BACKWARD,
-                        CART_TURN_CLEARANCE_RETREAT_M,
-                        "XY",
-                    )
-                )
-            for command in route:
-                adapter.execute_command(command, precision_mode=False)
-                commands_sent += 1
             _spin_coarse(adapter, -math.pi / 2.0)
             commands_sent += 1
             if abs(table_drive_distance) > 1e-9:
@@ -653,19 +628,10 @@ class Stage1TableReturnNavigator:
                 commands_sent += 1
             _spin_coarse(adapter, math.pi / 2.0)
             commands_sent += 1
-            if self.retreat_before_turn:
-                adapter.execute_command(
-                    self.runtime.MappedMotionCommand(
-                        self.runtime.WandaCommandKind.DRIVE_FORWARD,
-                        CART_TURN_CLEARANCE_RETREAT_M,
-                        "XY",
-                    ),
-                    precision_mode=False,
-                )
-                commands_sent += 1
             adapter.correct_absolute_imu_yaw(
                 target_yaw_rad=starting_yaw,
                 tolerance_rad=VECTOR_FINAL_YAW_TOLERANCE_RAD,
+                maximum_speed_rad_s=COARSE_ROTATION_SPEED_RAD_S,
             )
             pose = adapter.current_task_pose()
             return TableReturnNavigationExecution(
@@ -738,14 +704,3 @@ def _platform_near_x(platform):
         * float(platform.lateral_extent_m)
     )
     return float(platform.center[0]) - half_x_extent
-
-
-def _distance_commands(runtime, kind, distance_m):
-    if float(distance_m) <= 1e-9:
-        return ()
-    count = max(1, math.ceil(float(distance_m) / CART_ROUTE_MAX_SEGMENT_M))
-    segment = float(distance_m) / count
-    return tuple(
-        runtime.MappedMotionCommand(kind, segment, "XY")
-        for _ in range(count)
-    )

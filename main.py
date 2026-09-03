@@ -295,7 +295,6 @@ def run_real(args):
                                     say("扫描书本并沿直角路线到达第一轮抓书位置")
                                     Stage1TableReturnNavigator(
                                         vision=vision,
-                                        retreat_before_turn=False,
                                     ).navigate()
                             pick_loaded.result()
                             place_loaded.result()

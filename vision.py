@@ -1,5 +1,6 @@
 """视觉积木：5090 分割书本，机器人本地用深度计算吸取点。"""
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import os
 import time
@@ -237,25 +238,35 @@ class Vision:
             return ()
         message = Float64MultiArray()
         message.data = [-np.deg2rad(float(max(angles_deg))), 0.25]
-        captures = []
-        try:
-            for angle_deg in angles_deg:
-                target_yaw = -np.deg2rad(float(angle_deg))
-                deadline = time.monotonic() + 3.0
-                while rclpy.ok() and time.monotonic() < deadline:
-                    self.head_command_pub.publish(message)
-                    rclpy.spin_once(self.node, timeout_sec=0.02)
-                    if self.joints.get("joint_head0", 99.0) <= target_yaw + 0.02:
-                        capture = self.capture_book_frame(
-                            scan_angle_deg=angle_deg,
-                            keep_moving=lambda: self.head_command_pub.publish(message),
-                        )
-                        if capture is not None:
-                            captures.append(capture)
-                        break
-        finally:
-            self.set_head_pose(yaw_rad=0.0)
-        return self.detect_book_frames_queued(captures)
+        detections = []
+        with ThreadPoolExecutor(max_workers=1) as detector:
+            try:
+                for angle_deg in angles_deg:
+                    target_yaw = -np.deg2rad(float(angle_deg))
+                    deadline = time.monotonic() + 3.0
+                    while rclpy.ok() and time.monotonic() < deadline:
+                        self.head_command_pub.publish(message)
+                        rclpy.spin_once(self.node, timeout_sec=0.02)
+                        if self.joints.get("joint_head0", 99.0) <= target_yaw + 0.02:
+                            capture = self.capture_book_frame(
+                                scan_angle_deg=angle_deg,
+                                keep_moving=lambda: self.head_command_pub.publish(message),
+                            )
+                            if capture is not None:
+                                detections.append(
+                                    detector.submit(
+                                        self.detect_book_frames_queued,
+                                        (capture,),
+                                    )
+                                )
+                            break
+            finally:
+                self.set_head_pose(yaw_rad=0.0)
+
+        books = []
+        for detection in detections:
+            books.extend(detection.result())
+        return tuple(books)
 
     def capture_book_frame(
         self,
@@ -300,7 +311,7 @@ class Vision:
         return None
 
     def detect_book_frames_queued(self, frames):
-        """Process captured book frames in order after the head returns."""
+        """Process captured book frames in order."""
 
         books = []
         for frame in frames:
@@ -738,7 +749,7 @@ class Vision:
         return None
 
     def detect_cart_frames_queued(self, frames):
-        """Process the captured scan frames in order after rotation has stopped."""
+        """Process captured cart scan frames in order."""
 
         frames = tuple(frame for frame in frames if frame is not None)
         if not frames:
