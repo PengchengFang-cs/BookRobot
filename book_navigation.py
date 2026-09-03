@@ -288,6 +288,28 @@ class CartPlaceDockingNavigator:
         finally:
             adapter.stop()
 
+    def move_forward(self, distance_m):
+        """Move a short signed distance while looking for cart markers."""
+
+        if self.runtime is None:
+            self.runtime = load_navnav_runtime()
+        distance_m = float(distance_m)
+        kind = (
+            self.runtime.WandaCommandKind.DRIVE_FORWARD
+            if distance_m >= 0.0
+            else self.runtime.WandaCommandKind.DRIVE_BACKWARD
+        )
+        adapter = self.runtime.WandaRos2Adapter()
+        try:
+            adapter.preflight()
+            adapter.capture_task_origin()
+            adapter.execute_command(
+                self.runtime.MappedMotionCommand(kind, abs(distance_m), "XY"),
+                precision_mode=True,
+            )
+        finally:
+            adapter.stop()
+
     def align(self, target):
         if self.runtime is None:
             self.runtime = load_navnav_runtime()

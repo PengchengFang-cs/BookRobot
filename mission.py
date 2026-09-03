@@ -31,6 +31,8 @@ CART_PLACE_YAW_TOLERANCE_RAD = 5.0 * 3.141592653589793 / 180.0
 CART_PLACE_MAXIMUM_CORRECTIONS = 3
 CART_VISION_SUCCESSFUL_SAMPLES = 1
 CART_VISION_MAXIMUM_ATTEMPTS = 1
+CART_PLACE_RETRY_FORWARD_M = 0.05
+CART_PLACE_POSITION_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -442,6 +444,40 @@ def _cart_place_within_tolerance(target):
     )
 
 
+def _cart_place_target_with_position_retries(
+    vision,
+    navigator,
+    replay_reference,
+    slot_index,
+    preferred_body_target_m=None,
+    say=print,
+):
+    moved_forward_m = 0.0
+    for attempt in range(CART_PLACE_POSITION_ATTEMPTS):
+        try:
+            return _stable_cart_place_target(
+                vision,
+                replay_reference,
+                slot_index,
+                preferred_body_target_m=preferred_body_target_m,
+            )
+        except RuntimeError:
+            if attempt + 1 == CART_PLACE_POSITION_ATTEMPTS:
+                if moved_forward_m:
+                    say(
+                        "小推车平台连续三次检测失败，"
+                        f"自动后退 {moved_forward_m:.2f} m 后报错"
+                    )
+                    navigator.move_forward(-moved_forward_m)
+                raise
+            say(
+                "小推车平台检测失败，"
+                f"前进 {CART_PLACE_RETRY_FORWARD_M:.2f} m 后重新检测"
+            )
+            navigator.move_forward(CART_PLACE_RETRY_FORWARD_M)
+            moved_forward_m += CART_PLACE_RETRY_FORWARD_M
+
+
 def run_cart_place_alignment_once(
     vision,
     navigator,
@@ -480,11 +516,13 @@ def run_cart_place_alignment_once(
             correction_index=correction_index,
             slot_index=slot_index,
         ):
-            target = _stable_cart_place_target(
+            target = _cart_place_target_with_position_retries(
                 vision,
+                navigator,
                 replay_reference,
                 slot_index,
                 preferred_body_target_m=preferred_body_target_m,
+                say=say,
             )
         if first is None:
             first = target
