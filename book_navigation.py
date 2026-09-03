@@ -1,6 +1,5 @@
 """Thin adapter around the robot's deployed navnav_final alignment commands."""
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import importlib
 import math
@@ -78,7 +77,7 @@ def _spin_alignment(adapter, angle_rad):
     )
 
 
-def _scan_cart_while_turning(adapter, vision, *, on_capture):
+def _scan_cart_while_turning(adapter, vision):
     import rclpy
     from geometry_msgs.msg import Twist
 
@@ -86,6 +85,7 @@ def _scan_cart_while_turning(adapter, vision, *, on_capture):
     target_yaw = start.yaw + math.pi / 2.0
     capture_angles = iter(CART_SCAN_CAPTURE_ANGLES_DEG)
     next_capture_angle = next(capture_angles, None)
+    captures = []
     command = Twist()
     stable_since = None
     try:
@@ -107,7 +107,7 @@ def _scan_cart_while_turning(adapter, vision, *, on_capture):
                     adapter._zero_velocity_publisher.publish(command)
                     rclpy.spin_once(adapter, timeout_sec=0.02)
                     pose = adapter.latest_task_pose()
-                    on_capture(pose, capture)
+                    captures.append((pose, capture))
                 next_capture_angle = next(capture_angles, None)
             yaw_error = math.remainder(target_yaw - pose.yaw, 2.0 * math.pi)
             if abs(yaw_error) <= math.radians(1.0):
@@ -115,7 +115,7 @@ def _scan_cart_while_turning(adapter, vision, *, on_capture):
                 now = time.monotonic()
                 stable_since = now if stable_since is None else stable_since
                 if now - stable_since >= 0.5:
-                    return
+                    return tuple(captures)
             else:
                 stable_since = None
                 command.angular.z = math.copysign(
@@ -457,29 +457,11 @@ class Stage1CartNavigator:
                     precision_mode=False,
                 )
                 commands_sent += 1
-            detections = []
-            with ThreadPoolExecutor(max_workers=1) as detector:
-                def submit_capture(capture_pose, capture):
-                    detections.append(
-                        (
-                            capture_pose,
-                            capture,
-                            detector.submit(
-                                self.vision.detect_cart_frames_queued,
-                                (capture,),
-                            ),
-                        )
-                    )
+            captures = _scan_cart_while_turning(adapter, self.vision)
+            commands_sent += 1
 
-                _scan_cart_while_turning(
-                    adapter,
-                    self.vision,
-                    on_capture=submit_capture,
-                )
-                commands_sent += 1
-
-            for capture_pose, _capture, detection in detections:
-                carts = detection.result()
+            for capture_pose, capture in captures:
+                carts = self.vision.detect_cart_frames_queued((capture,))
                 cart = carts[0] if carts else None
                 if cart is None or cart.body_target is None:
                     continue
@@ -501,6 +483,7 @@ class Stage1CartNavigator:
                         cart.debug_image,
                     )
                 )
+                break
 
             pose = adapter.current_task_pose()
             if not candidates:
