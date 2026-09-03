@@ -385,11 +385,12 @@ class Stage1CartNavigator:
                 f"target_y={cart_target_point[1]:.3f} m, "
                 f"move_y={lateral_delta:.3f} m"
             )
-            for command in _distance_commands(
-                self.runtime,
-                lateral_kind,
-                abs(lateral_delta),
-            ):
+            if abs(lateral_delta) > 1e-9:
+                command = self.runtime.MappedMotionCommand(
+                    lateral_kind,
+                    abs(lateral_delta),
+                    "XY",
+                )
                 adapter.execute_command(command, precision_mode=False)
                 commands_sent += 1
 

@@ -1,6 +1,7 @@
 """把感知、移动和动作积木按任务顺序接起来。"""
 
 from dataclasses import dataclass
+import math
 from statistics import median
 
 from experiment_timing import timed_phase
@@ -386,12 +387,18 @@ def run_book_pick_once(
     return BookPickRun(alignment=alignment, replay=replay)
 
 
-def _stable_cart_place_target(vision, replay_reference, slot_index):
+def _stable_cart_place_target(
+    vision,
+    replay_reference,
+    slot_index,
+    preferred_body_target_m=None,
+):
     find_samples = getattr(vision, "find_cart_samples", None)
     if callable(find_samples):
         carts = find_samples(
             successful_samples=CART_VISION_SUCCESSFUL_SAMPLES,
             maximum_attempts=CART_VISION_MAXIMUM_ATTEMPTS,
+            preferred_body_target_m=preferred_body_target_m,
         )
         if len(carts) < CART_VISION_SUCCESSFUL_SAMPLES:
             raise RuntimeError(
@@ -399,7 +406,9 @@ def _stable_cart_place_target(vision, replay_reference, slot_index):
                 f"{len(carts)}/{CART_VISION_SUCCESSFUL_SAMPLES}"
             )
     else:
-        carts = (vision.find_cart(),)
+        carts = (
+            vision.find_cart(preferred_body_target_m=preferred_body_target_m),
+        )
     targets = []
     for cart in carts:
         if cart is None or cart.platform is None:
@@ -439,6 +448,7 @@ def run_cart_place_alignment_once(
     replay_reference,
     *,
     slot_index,
+    preferred_body_target_m=None,
     say=print,
 ):
     """Repeatedly match live shelf geometry to Place-2.4 frame zero."""
@@ -471,7 +481,10 @@ def run_cart_place_alignment_once(
             slot_index=slot_index,
         ):
             target = _stable_cart_place_target(
-                vision, replay_reference, slot_index
+                vision,
+                replay_reference,
+                slot_index,
+                preferred_body_target_m=preferred_body_target_m,
             )
         if first is None:
             first = target
@@ -504,6 +517,20 @@ def run_cart_place_alignment_once(
                 odom_dy_m=last_navigation.odom_dy_m,
                 imu_dyaw_rad=last_navigation.imu_dyaw_rad,
             )
+        if preferred_body_target_m is not None:
+            delta_x = (
+                preferred_body_target_m[0] - last_navigation.odom_dx_m
+            )
+            delta_y = (
+                preferred_body_target_m[1] - last_navigation.odom_dy_m
+            )
+            cosine = math.cos(-last_navigation.imu_dyaw_rad)
+            sine = math.sin(-last_navigation.imu_dyaw_rad)
+            preferred_body_target_m = (
+                cosine * delta_x - sine * delta_y,
+                sine * delta_x + cosine * delta_y,
+                preferred_body_target_m[2],
+            )
         say(_format_navigation("小推车细校准运动反馈", last_navigation))
     raise AssertionError("unreachable")
 
@@ -515,6 +542,7 @@ def run_book_place_once(
     replay_reference,
     *,
     slot_index,
+    preferred_body_target_m=None,
     say=print,
 ):
     with timed_phase("place_alignment", slot_index=slot_index) as timing:
@@ -523,6 +551,7 @@ def run_book_place_once(
             navigator,
             replay_reference,
             slot_index=slot_index,
+            preferred_body_target_m=preferred_body_target_m,
             say=say,
         )
         timing.update(
@@ -593,12 +622,28 @@ def run_book_pick_place_once(
                 coarse_cart_navigation.selected_scan_yaw_rad
             ),
         )
+    target_x = (
+        coarse_cart_navigation.cart_target_origin_m[0]
+        - coarse_cart_navigation.odom_dx_m
+    )
+    target_y = (
+        coarse_cart_navigation.cart_target_origin_m[1]
+        - coarse_cart_navigation.odom_dy_m
+    )
+    cosine = math.cos(-coarse_cart_navigation.imu_dyaw_rad)
+    sine = math.sin(-coarse_cart_navigation.imu_dyaw_rad)
+    preferred_body_target_m = (
+        cosine * target_x - sine * target_y,
+        sine * target_x + cosine * target_y,
+        coarse_cart_navigation.cart_target_origin_m[2],
+    )
     place = run_book_place_once(
         vision,
         place_navigator,
         place_replayer,
         place_reference,
         slot_index=slot_index,
+        preferred_body_target_m=preferred_body_target_m,
         say=say,
     )
     return BookPickPlaceRun(pick, coarse_cart_navigation, place)

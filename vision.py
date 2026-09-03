@@ -21,7 +21,6 @@ from cart_geometry import (
     CartGeometryError,
     reconstruct_cart_body_target,
     reconstruct_cart_marker_platform,
-    select_leftmost_cart_platform,
 )
 from config import (
     BODY_JOINT_STATES_TOPIC,
@@ -358,6 +357,7 @@ class Vision:
         snapshot,
         joints,
         *,
+        preferred_body_target_m=None,
         rpc_captured_at_ns=None,
         debug_path=None,
         record_label="cart",
@@ -391,36 +391,53 @@ class Vision:
         )
         if not observations:
             return None
-        platform_candidates = []
         body_candidates = []
         for observation in observations:
+            if observation.semantic_class != "cart_body":
+                continue
+            geometry_args = dict(
+                observation=observation,
+                depth_m=depth,
+                intrinsics=intrinsics,
+                camera_to_base=lambda point: camera_point_to_base(
+                    point, body, head_yaw, head_pitch
+                ),
+            )
             try:
-                geometry_args = dict(
-                    observation=observation,
-                    depth_m=depth,
-                    intrinsics=intrinsics,
-                    camera_to_base=lambda point: camera_point_to_base(
-                        point, body, head_yaw, head_pitch
-                    ),
+                body_candidates.append(
+                    (observation, reconstruct_cart_body_target(**geometry_args))
                 )
-                if observation.semantic_class == "cart_body":
-                    body_candidates.append(reconstruct_cart_body_target(
-                        **geometry_args
-                    ))
-                    platform_candidates.append(
-                        reconstruct_cart_marker_platform(
-                            color_bgr=color,
-                            **geometry_args,
-                        )
-                    )
             except CartGeometryError as error:
                 print(f"[视觉] 小推车几何不可用: {error}")
-        body_target = (
-            max(body_candidates, key=lambda candidate: candidate.confidence)
-            if body_candidates
-            else None
-        )
-        platform = select_leftmost_cart_platform(platform_candidates)
+        if not body_candidates:
+            return None
+        if preferred_body_target_m is None:
+            selected_observation, body_target = max(
+                body_candidates,
+                key=lambda candidate: candidate[1].confidence,
+            )
+        else:
+            selected_observation, body_target = min(
+                body_candidates,
+                key=lambda candidate: (
+                    (candidate[1].center[0] - preferred_body_target_m[0]) ** 2
+                    + (candidate[1].center[1] - preferred_body_target_m[1]) ** 2,
+                    -candidate[1].confidence,
+                ),
+            )
+        try:
+            platform = reconstruct_cart_marker_platform(
+                observation=selected_observation,
+                depth_m=depth,
+                intrinsics=intrinsics,
+                camera_to_base=lambda point: camera_point_to_base(
+                    point, body, head_yaw, head_pitch
+                ),
+                color_bgr=color,
+            )
+        except CartGeometryError as error:
+            platform = None
+            print(f"[视觉] 已选推车的平台几何不可用: {error}")
         if body_target is not None:
             print(
                 "[视觉] 推车粗导航点 @ base_link: "
@@ -457,7 +474,7 @@ class Vision:
             ),
         )
         return LocatedCart(
-            observations=tuple(observations),
+            observations=(selected_observation,),
             body_target=body_target,
             platform=platform,
             frame_id="base_link",
@@ -637,7 +654,7 @@ class Vision:
 
         return tuple(detect(frame) for frame in frames)
 
-    def find_cart(self, *, maximum_captures=1):
+    def find_cart(self, *, maximum_captures=1, preferred_body_target_m=None):
         """Return one cart-loading observation without any robot motion."""
 
         needed_joints = ("body_joint", "joint_head0", "joint_head1")
@@ -659,7 +676,11 @@ class Vision:
             snapshot, joints = selected
             self.last_capture_ns = snapshot.captured_at_ns
             try:
-                result = self._detect_cart_once(snapshot, joints)
+                result = self._detect_cart_once(
+                    snapshot,
+                    joints,
+                    preferred_body_target_m=preferred_body_target_m,
+                )
                 if result is not None and result.platform is not None:
                     return result
                 print("[视觉] 当前帧没有检测到可用的小推车托板")
@@ -671,7 +692,13 @@ class Vision:
                 )
         return None
 
-    def find_cart_samples(self, *, successful_samples=1, maximum_attempts=1):
+    def find_cart_samples(
+        self,
+        *,
+        successful_samples=1,
+        maximum_attempts=1,
+        preferred_body_target_m=None,
+    ):
         """Return immediately on the first successful cart measurement."""
 
         def report(attempt, success_count, found):
@@ -688,6 +715,7 @@ class Vision:
         def find_usable_platform():
             result = self.find_cart(
                 maximum_captures=CART_PLACE_CAPTURE_ATTEMPTS,
+                preferred_body_target_m=preferred_body_target_m,
             )
             return result if result is not None and result.platform is not None else None
 
