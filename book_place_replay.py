@@ -24,14 +24,21 @@ PLACE_ASSET_PATH = Path(
 )
 PLACE_FRAME_COUNT = 388
 PLACE_D01_STOP_FRAME_INDEX = 190
-PLACE_CAPTURE_PRE_BUFFER_COUNT = 15
-PLACE_CAPTURE_OFFSETS = tuple(range(-15, -4))
+PLACE_CAPTURE_PRE_BUFFER_COUNT = 12
+PLACE_CAPTURE_OFFSETS = tuple(range(-12, -4))
+
+
+@dataclass(frozen=True)
+class PlaceCaptureFrame:
+    release_offset: int
+    captured_at_ns: int
+    path: str
 
 
 class _PlaceFrameCapture:
     """Save consecutive camera frames before the Place release trigger."""
 
-    def __init__(self):
+    def __init__(self, completed_callback=None):
         record_dir = os.environ.get("FPC_EXPERIMENT_RECORD_DIR")
         if not record_dir:
             raise RuntimeError("FPC_EXPERIMENT_RECORD_DIR is required for Place capture")
@@ -40,6 +47,8 @@ class _PlaceFrameCapture:
         self.subscription = None
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.futures = []
+        self.completed_callback = completed_callback
+        self.completed_future = None
         self.pre_release_frames = deque(maxlen=PLACE_CAPTURE_PRE_BUFFER_COUNT)
         self.selected_pre_release_frames = None
         self.release_marked = False
@@ -75,6 +84,31 @@ class _PlaceFrameCapture:
             return
         self.selected_pre_release_frames = tuple(self.pre_release_frames)
         self.release_marked = True
+        selected = tuple(zip(
+            PLACE_CAPTURE_OFFSETS,
+            self.selected_pre_release_frames[:len(PLACE_CAPTURE_OFFSETS)],
+        ))
+        captures = []
+        for offset, (stamp_ns, message) in selected:
+            output_path = self.record_dir / (
+                f"place_release_minus_{abs(offset):02d}.jpg"
+            )
+            captures.append(PlaceCaptureFrame(
+                release_offset=offset,
+                captured_at_ns=stamp_ns,
+                path=str(output_path),
+            ))
+            self.futures.append((
+                offset,
+                stamp_ns,
+                output_path,
+                self.executor.submit(self._write, message, output_path),
+            ))
+        if self.completed_callback is not None:
+            self.completed_future = self.executor.submit(
+                self.completed_callback,
+                tuple(captures),
+            )
 
     def _write(self, message, output_path):
         import cv2
@@ -94,22 +128,6 @@ class _PlaceFrameCapture:
                 f"expected={PLACE_CAPTURE_PRE_BUFFER_COUNT}, actual={len(pre_release)}"
             )
 
-        selected = tuple(zip(
-            PLACE_CAPTURE_OFFSETS,
-            pre_release[:len(PLACE_CAPTURE_OFFSETS)],
-        ))
-
-        for offset, (stamp_ns, message) in selected:
-            output_path = self.record_dir / (
-                f"place_release_minus_{abs(offset):02d}.jpg"
-            )
-            self.futures.append((
-                offset,
-                stamp_ns,
-                output_path,
-                self.executor.submit(self._write, message, output_path),
-            ))
-
         self.close(node)
         for offset, stamp_ns, output_path, future in self.futures:
             shape = future.result()
@@ -118,6 +136,8 @@ class _PlaceFrameCapture:
                 f"camera_stamp_ns={stamp_ns} path={output_path} shape={shape}",
                 flush=True,
             )
+        if self.completed_future is not None:
+            self.completed_future.result()
 
     def close(self, node):
         if self.subscription is not None:
@@ -140,7 +160,9 @@ class LegacyV3PlaceRuntime(LegacyV3PickRuntime):
     def _publish_recorded_frames(
         self, module, node, episode, entry, context, deadline, before
     ):
-        capture = _PlaceFrameCapture()
+        capture = _PlaceFrameCapture(
+            completed_callback=getattr(self, "place_capture_callback", None)
+        )
         capture.start(node)
         self.frame_callback = capture.capture
         try:
@@ -200,11 +222,13 @@ class Stage1BookPlaceReplayer:
         joint_positions=None,
         spin_feedback=None,
         keep_runtime_open=False,
+        capture_handler=None,
     ):
         self.runtime = runtime
         self.joint_positions = joint_positions
         self.spin_feedback = spin_feedback
         self.keep_runtime_open = bool(keep_runtime_open)
+        self.capture_handler = capture_handler
         self._prepared_episode = None
 
     def initialize(self):
@@ -221,8 +245,13 @@ class Stage1BookPlaceReplayer:
         self.initialize()
         self._prepared_episode = self.runtime.load_episode()
 
-    def place(self):
+    def place(self, *, book_index=None):
         self.preload()
+        self.runtime.place_capture_callback = (
+            None
+            if self.capture_handler is None
+            else lambda captures: self.capture_handler(book_index, captures)
+        )
         try:
             episode = self._prepared_episode
             torso_target = float(episode.actions["target_qpos_torso"][0, 0])
@@ -238,6 +267,7 @@ class Stage1BookPlaceReplayer:
                 d01_released=released,
             )
         finally:
+            self.runtime.place_capture_callback = None
             if not self.keep_runtime_open:
                 self.runtime.close()
 

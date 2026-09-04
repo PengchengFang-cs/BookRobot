@@ -607,7 +607,7 @@ def run_book_place_once(
         )
     say("恢复 Place 2.4 第0帧全身姿态并以1.0倍速回放")
     with timed_phase("place_replay", speed=1.0, slot_index=slot_index) as timing:
-        replay = replayer.place()
+        replay = replayer.place(book_index=slot_index)
         timing.update(
             frames_sent=replay.frames_sent,
             torso_target_m=replay.torso_target_m,

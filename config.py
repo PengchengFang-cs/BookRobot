@@ -111,6 +111,15 @@ BOOK_OCR_INVENTORY_CATALOG_HASH = os.getenv(
     "56caed81e464d0535b0b86deda9abbeb5854b0a64679b636dc9b6bd952767c81",
 )
 
+# Stage 1 放书时使用的独立 GPU 7 SAM+OCR 服务及其跨阶段结果。
+PLACE_OCR_ENDPOINT = os.getenv(
+    "PLACE_OCR_ENDPOINT", "http://127.0.0.1:7445/infer"
+)
+STAGE1_CART_BOOKS_PATH = Path(os.getenv(
+    "STAGE1_CART_BOOKS_PATH",
+    "/home/unix_ai/fpc/logs/stage1_cart_books.json",
+))
+
 # 第一阶段平放书本的固定吸取点。
 BOOK_LONG_INSET_M = 0.13
 BOOK_RIGHT_INSET_M = 0.10

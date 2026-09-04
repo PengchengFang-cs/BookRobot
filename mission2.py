@@ -16,6 +16,8 @@ import sys
 import time
 import uuid
 
+from place_ocr import load_stage1_cart_book_labels
+
 REPLAY_ROOT = Path(
     "/home/unix_ai/DataCollector/DataReplay_v3/v3_assets/takes/"
     "20260819_libraryrobot_datareplay"
@@ -659,12 +661,16 @@ def _ocr_label_for_book(frame, book, ocr_client):
     return max(associated, key=lambda item: item[0])[1]
 
 
-def observe_rightmost_cart_book(vision, ocr_client):
-    """Select the robot-view rightmost spine and associate its complete OCR."""
+def observe_rightmost_cart_book(vision, ocr_client, *, known_label=None):
+    """Select the robot-view rightmost spine and attach its Stage-1 label."""
 
     frame = _capture_vertical_cart_frame(vision)
     selected = frame.books_right_to_left[0]
-    label = _ocr_label_for_book(frame, selected, ocr_client)
+    label = (
+        _ocr_label_for_book(frame, selected, ocr_client)
+        if known_label is None
+        else validate_book_label(known_label)
+    )
     return TrackedBook(
         tracking_key=CartBookTrackingKey(
             order_from_right=0,
@@ -1073,9 +1079,14 @@ def run_stage2_pick_one(
 ):
     say("恢复DR11.2第0帧全身姿态，底盘保持静止")
     cart_pick_replayer.prepare()
-    selected = observe_rightmost_cart_book(vision, ocr_client)
+    known_label = load_stage1_cart_book_labels()[-1]
+    selected = observe_rightmost_cart_book(
+        vision,
+        ocr_client,
+        known_label=known_label,
+    )
     label = validate_book_label(selected.label)
-    say(f"最右侧书OCR={label.text}")
+    say(f"最右侧书使用Stage 1记录标签={label.text}")
     align_tracked_book(
         vision,
         pick_navigator,
@@ -1108,11 +1119,16 @@ def run_stage2(
         navigate_initial_to_cart(vision)
 
     cart_pick_replayer = pick_replayers["DR11.2"]
-    for book_index in range(1, 4):
-        say(f"Stage 2 第 {book_index}/3 本")
+    labels_right_to_left = tuple(reversed(load_stage1_cart_book_labels()))
+    for book_index, known_label in enumerate(labels_right_to_left, start=1):
+        say(f"Stage 2 第 {book_index}/{len(labels_right_to_left)} 本")
         say("恢复DR11.2第0帧全身姿态，底盘保持静止")
         cart_pick_replayer.prepare()
-        selected = observe_rightmost_cart_book(vision, ocr_client)
+        selected = observe_rightmost_cart_book(
+            vision,
+            ocr_client,
+            known_label=known_label,
+        )
         if selected.label is None:
             raise RuntimeError("OCR无法识别")
         label = validate_book_label(selected.label)
@@ -1146,11 +1162,11 @@ def run_stage2(
             f"D01 released={place_result.d01_released}"
         )
 
-        if book_index < 3:
+        if book_index < len(labels_right_to_left):
             say("后退离开书架，重新检测cart_body并返回推车")
             navigate_shelf_to_cart(vision)
         else:
-            say("Stage 2第三本放书完成：向后离开书架20 cm")
+            say("Stage 2最后一本放书完成：向后离开书架20 cm")
             retreat_after_stage2_third_place(vision)
 
 

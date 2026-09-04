@@ -253,6 +253,7 @@ def run_real(args):
             if args.stage1_loop or args.stage1_second_book:
                 from book_pick_replay import Stage1BookPickReplayer
                 from book_place_replay import Stage1BookPlaceReplayer
+                from place_ocr import Stage1PlaceOcrRecorder
 
                 first_book_index = 2 if args.stage1_second_book else 1
                 experiment_book_count = (
@@ -276,9 +277,13 @@ def run_real(args):
                         **feedback,
                         keep_runtime_open=True,
                     )
+                    place_ocr_recorder = Stage1PlaceOcrRecorder(
+                        reset=not args.stage1_second_book,
+                    )
                     place_replayer = Stage1BookPlaceReplayer(
                         **feedback,
                         keep_runtime_open=True,
+                        capture_handler=place_ocr_recorder.submit,
                     )
                     replay_module = None
                     manipulation_was_active = False
@@ -376,13 +381,16 @@ def run_real(args):
                                                 ).navigate()
                     finally:
                         try:
-                            pick_replayer.close()
-                            place_replayer.close()
+                            place_ocr_recorder.close()
                         finally:
-                            if manipulation_was_active:
-                                replay_module._start_service_and_wait(
-                                    "manipulation.service"
-                                )
+                            try:
+                                pick_replayer.close()
+                                place_replayer.close()
+                            finally:
+                                if manipulation_was_active:
+                                    replay_module._start_service_and_wait(
+                                        "manipulation.service"
+                                    )
             elif args.book_place:
                 from book_place_replay import Stage1BookPlaceReplayer
 
