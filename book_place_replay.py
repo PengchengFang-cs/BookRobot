@@ -24,12 +24,12 @@ PLACE_ASSET_PATH = Path(
 )
 PLACE_FRAME_COUNT = 388
 PLACE_D01_STOP_FRAME_INDEX = 190
-PLACE_CAPTURE_PRE_FRAME_COUNT = 10
-PLACE_CAPTURE_POST_FRAME_COUNT = 10
+PLACE_CAPTURE_PRE_BUFFER_COUNT = 15
+PLACE_CAPTURE_OFFSETS = tuple(range(-15, -4))
 
 
 class _PlaceFrameCapture:
-    """Save consecutive camera frames around the Place release trigger."""
+    """Save consecutive camera frames before the Place release trigger."""
 
     def __init__(self):
         record_dir = os.environ.get("FPC_EXPERIMENT_RECORD_DIR")
@@ -40,9 +40,8 @@ class _PlaceFrameCapture:
         self.subscription = None
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.futures = []
-        self.pre_release_frames = deque(maxlen=PLACE_CAPTURE_PRE_FRAME_COUNT)
+        self.pre_release_frames = deque(maxlen=PLACE_CAPTURE_PRE_BUFFER_COUNT)
         self.selected_pre_release_frames = None
-        self.post_release_frames = []
         self.release_marked = False
 
     def start(self, node):
@@ -70,8 +69,6 @@ class _PlaceFrameCapture:
         )
         if not self.release_marked:
             self.pre_release_frames.append(captured)
-        elif len(self.post_release_frames) < PLACE_CAPTURE_POST_FRAME_COUNT:
-            self.post_release_frames.append(captured)
 
     def capture(self, frame_index):
         if frame_index != PLACE_D01_STOP_FRAME_INDEX or self.release_marked:
@@ -91,30 +88,20 @@ class _PlaceFrameCapture:
         if not self.release_marked:
             raise RuntimeError("Place release frame was not reached")
         pre_release = self.selected_pre_release_frames or ()
-        post_release = tuple(self.post_release_frames)
-        if len(pre_release) != PLACE_CAPTURE_PRE_FRAME_COUNT:
+        if len(pre_release) != PLACE_CAPTURE_PRE_BUFFER_COUNT:
             raise RuntimeError(
                 "Place pre-release camera frames incomplete: "
-                f"expected={PLACE_CAPTURE_PRE_FRAME_COUNT}, actual={len(pre_release)}"
-            )
-        if len(post_release) != PLACE_CAPTURE_POST_FRAME_COUNT:
-            raise RuntimeError(
-                "Place post-release camera frames incomplete: "
-                f"expected={PLACE_CAPTURE_POST_FRAME_COUNT}, actual={len(post_release)}"
+                f"expected={PLACE_CAPTURE_PRE_BUFFER_COUNT}, actual={len(pre_release)}"
             )
 
-        selected = []
-        for offset, captured in zip(
-            range(-PLACE_CAPTURE_PRE_FRAME_COUNT, 0), pre_release
-        ):
-            selected.append((offset, captured))
-        for offset, captured in enumerate(post_release, start=1):
-            selected.append((offset, captured))
+        selected = tuple(zip(
+            PLACE_CAPTURE_OFFSETS,
+            pre_release[:len(PLACE_CAPTURE_OFFSETS)],
+        ))
 
         for offset, (stamp_ns, message) in selected:
-            side = "minus" if offset < 0 else "plus"
             output_path = self.record_dir / (
-                f"place_release_{side}_{abs(offset):02d}.jpg"
+                f"place_release_minus_{abs(offset):02d}.jpg"
             )
             self.futures.append((
                 offset,
