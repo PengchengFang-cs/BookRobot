@@ -1,5 +1,6 @@
 """Stage-1 cart Place using the complete recorded DataReplay 2.4 episode."""
 
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import os
@@ -23,11 +24,12 @@ PLACE_ASSET_PATH = Path(
 )
 PLACE_FRAME_COUNT = 388
 PLACE_D01_STOP_FRAME_INDEX = 190
-PLACE_CAPTURE_FRAME_INDICES = tuple(range(165, 190))
+PLACE_CAPTURE_PRE_FRAME_COUNT = 10
+PLACE_CAPTURE_POST_FRAME_COUNT = 10
 
 
 class _PlaceFrameCapture:
-    """Save selected live head-camera frames without blocking replay pacing."""
+    """Save consecutive camera frames around the Place release trigger."""
 
     def __init__(self):
         record_dir = os.environ.get("FPC_EXPERIMENT_RECORD_DIR")
@@ -35,10 +37,13 @@ class _PlaceFrameCapture:
             raise RuntimeError("FPC_EXPERIMENT_RECORD_DIR is required for Place capture")
         self.record_dir = Path(record_dir)
         self.bridge = None
-        self.latest_color = None
         self.subscription = None
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.futures = []
+        self.pre_release_frames = deque(maxlen=PLACE_CAPTURE_PRE_FRAME_COUNT)
+        self.selected_pre_release_frames = None
+        self.post_release_frames = []
+        self.release_marked = False
 
     def start(self, node):
         from cv_bridge import CvBridge
@@ -58,19 +63,21 @@ class _PlaceFrameCapture:
         )
 
     def _receive_color(self, message):
-        self.latest_color = message
+        stamp = message.header.stamp
+        captured = (
+            int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec),
+            message,
+        )
+        if not self.release_marked:
+            self.pre_release_frames.append(captured)
+        elif len(self.post_release_frames) < PLACE_CAPTURE_POST_FRAME_COUNT:
+            self.post_release_frames.append(captured)
 
     def capture(self, frame_index):
-        if frame_index not in PLACE_CAPTURE_FRAME_INDICES:
+        if frame_index != PLACE_D01_STOP_FRAME_INDEX or self.release_marked:
             return
-        if self.latest_color is None:
-            return
-        output_path = self.record_dir / f"place_frame_{frame_index:03d}.jpg"
-        self.futures.append((
-            frame_index,
-            output_path,
-            self.executor.submit(self._write, self.latest_color, output_path),
-        ))
+        self.selected_pre_release_frames = tuple(self.pre_release_frames)
+        self.release_marked = True
 
     def _write(self, message, output_path):
         import cv2
@@ -81,20 +88,48 @@ class _PlaceFrameCapture:
         return image.shape
 
     def finish(self, node):
+        if not self.release_marked:
+            raise RuntimeError("Place release frame was not reached")
+        pre_release = self.selected_pre_release_frames or ()
+        post_release = tuple(self.post_release_frames)
+        if len(pre_release) != PLACE_CAPTURE_PRE_FRAME_COUNT:
+            raise RuntimeError(
+                "Place pre-release camera frames incomplete: "
+                f"expected={PLACE_CAPTURE_PRE_FRAME_COUNT}, actual={len(pre_release)}"
+            )
+        if len(post_release) != PLACE_CAPTURE_POST_FRAME_COUNT:
+            raise RuntimeError(
+                "Place post-release camera frames incomplete: "
+                f"expected={PLACE_CAPTURE_POST_FRAME_COUNT}, actual={len(post_release)}"
+            )
+
+        selected = []
+        for offset, captured in zip(
+            range(-PLACE_CAPTURE_PRE_FRAME_COUNT, 0), pre_release
+        ):
+            selected.append((offset, captured))
+        for offset, captured in enumerate(post_release, start=1):
+            selected.append((offset, captured))
+
+        for offset, (stamp_ns, message) in selected:
+            side = "minus" if offset < 0 else "plus"
+            output_path = self.record_dir / (
+                f"place_release_{side}_{abs(offset):02d}.jpg"
+            )
+            self.futures.append((
+                offset,
+                stamp_ns,
+                output_path,
+                self.executor.submit(self._write, message, output_path),
+            ))
+
         self.close(node)
-        captured = []
-        for frame_index, output_path, future in self.futures:
+        for offset, stamp_ns, output_path, future in self.futures:
             shape = future.result()
             print(
-                f"PLACE_CAPTURE frame={frame_index} path={output_path} "
-                f"shape={shape}",
+                f"PLACE_CAPTURE release_offset={offset:+d} "
+                f"camera_stamp_ns={stamp_ns} path={output_path} shape={shape}",
                 flush=True,
-            )
-            captured.append(frame_index)
-        if tuple(captured) != PLACE_CAPTURE_FRAME_INDICES:
-            raise RuntimeError(
-                "Place capture frames incomplete: "
-                f"expected={PLACE_CAPTURE_FRAME_INDICES}, actual={tuple(captured)}"
             )
 
     def close(self, node):
