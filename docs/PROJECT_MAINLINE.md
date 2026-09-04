@@ -2,7 +2,13 @@
 
 ## 当前目标
 
-FPC 当前基于 FruitTest 的可废弃副本实现 Stage 1 完整任务：到书桌抓书、转移到小推车、按五个槽位精定位并执行 Place DataReplay。当前唯一运行顺序见 [`STAGE1_PIPELINE.md`](STAGE1_PIPELINE.md)。
+当前主目标是 Stage 2：从推车依次取出三本书，通过 OCR 确定各自目标层和编号，
+再放到第三、第四或第五层的正确位置。入口、资产和接口分工见
+[`HANDOFF_STAGE23_20260823.md`](HANDOFF_STAGE23_20260823.md)。
+
+当前比赛阶段定义为：Stage 1 桌面书搬运到推车；Stage 2 推车三本书归架；
+Stage 3 识别并纠正书架中唯一错放书。Stage 1 主流程已经打通，只保留速度提升和
+Place 前后距离估计微调两项待办；其运行顺序见 [`STAGE1_PIPELINE.md`](STAGE1_PIPELINE.md)。
 
 这个副本用于隔离试验，不直接修改或依赖机器人上的其他旧工程作为当前开发工作区。
 
@@ -48,3 +54,5 @@ GitHub 仓库 `PengchengFang-cs/BookRobot` 是公开备份，不是部署通道�
 - 整车中心只用于书桌到小推车之间的粗导航，不作为 Place 精定位目标。
 - 不使用旧地图固定点、`0.48 m` 水果距离或 `0.8 m` 整车中心距离。
 - 原参考工程继续保持只读；所有实现只进入两个允许写入的 `fpc` 工作路径。
+- Stage 2/3 复用 Stage 1 已有的视觉传输、底盘精定位和 DataReplay 桥，不把旧的
+  “感知/导航/抓取/demo”开发里程碑继续称为比赛 Stage。

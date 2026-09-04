@@ -7,6 +7,12 @@
 - 不记录凭证、密钥或日志原文件；只保留理解项目演进所需的非敏感事实和结论。
 - 本日志记录重要过程，但不替代 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 的当前状态或 [`ROBOT_ISSUES.md`](ROBOT_ISSUES.md) 的永久故障档案。
 
+## 2026-09-04（Asia/Shanghai）
+
+- 统一比赛 Stage 定义：Stage 1 为桌面书搬运到推车，Stage 2 为从推车取三本书并分别归入第三、第四、第五层，Stage 3 为识别并纠正书架中唯一错放书。旧路线图按感知、导航、抓取、demo、比赛集成划分的 Stage 1～5 正式废弃。
+- 当前开发主线进入 Stage 2。Stage 1 主流程已打通，只保留两个待办：继续提升整体速度；继续小幅微调推车 Place 的前后距离估计。此前整体 `30 mm` 补偿已确认过度并恢复，不再作为当前参考。
+- 同步更新 `CURRENT_STATUS.md`、`ROADMAP.md`、`PROJECT_MAINLINE.md`、文档入口和 Stage 2/3 交接页，供另一侧 Stage 2 开发直接读取。
+
 ## 2026-09-03 至 2026-09-04（Asia/Shanghai）
 
 - 在 `/home/cvailab/Ruan/Library_306` 的 `feature/stage23-integration` 上继续 Stage 1 两本速度实验，目标为排除第一次到书桌粗导航后，两本完整 Pick→Place 在五分钟内完成。

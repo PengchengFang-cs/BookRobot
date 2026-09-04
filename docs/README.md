@@ -1,16 +1,19 @@
 # FPC 项目文档
 
-这里是 FPC 项目记录的统一入口。FPC 当前使用从 FruitTest 复制出的可废弃工作副本，验证书本视觉和机器人部件；安全边界始终以仓库根目录的 `AGENTS.md` 为准。
+这里是 BookRobot 项目记录的统一入口。当前正在推进 Stage 2：从推车取三本书并
+分别归入书架第三、第四和第五层。Stage 1 桌面书搬运到推车的主流程已经打通，
+仅保留速度提升和 Place 前后距离微调两项待办。安全边界始终以仓库根目录的
+`AGENTS.md` 为准。
 
 ## Agent 必读顺序
 
 1. 先读工作区根目录的 `AGENTS.md`，确认允许写入的位置、远端操作边界和真机安全要求。
-2. 再读 [`HANDOFF_20260822.md`](HANDOFF_20260822.md)，了解Stage 1真实进度、已完成真机流程和此前拉车探索。
-3. 涉及三本归架与错放书纠正时读 [`HANDOFF_STAGE23_20260823.md`](HANDOFF_STAGE23_20260823.md) 和 [`STAGE23_PENDING_INTERFACES.md`](STAGE23_PENDING_INTERFACES.md)。
-4. 然后读 [`PROJECT_MAINLINE.md`](PROJECT_MAINLINE.md)，了解项目目标、5090 与 Wanda 的职责以及部署方式。
-5. 再读 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)，了解历史状态和未解决问题；若与最新交接冲突，以交接和实际源码为准。
-6. 涉及真机任务顺序时读 [`STAGE1_PIPELINE.md`](STAGE1_PIPELINE.md)。
-7. 根据任务查阅路线图、故障档案、工作日志或具体设计与实施计划。
+2. 读 [`CURRENT_STATUS.md`](CURRENT_STATUS.md) 和 [`ROADMAP.md`](ROADMAP.md)，确认当前 Stage 定义、进度与遗留待办。
+3. 当前 Stage 2 工作先读 [`HANDOFF_STAGE23_20260823.md`](HANDOFF_STAGE23_20260823.md) 和 [`STAGE23_PENDING_INTERFACES.md`](STAGE23_PENDING_INTERFACES.md)。
+4. 需要 Stage 1 历史和真机细节时再读 [`HANDOFF_20260822.md`](HANDOFF_20260822.md)。
+5. 然后读 [`PROJECT_MAINLINE.md`](PROJECT_MAINLINE.md)，了解项目目标、5090 与 Wanda 的职责以及部署方式。
+6. 涉及 Stage 1 真机顺序时读 [`STAGE1_PIPELINE.md`](STAGE1_PIPELINE.md)。
+7. 根据任务查阅故障档案、工作日志或具体设计与实施计划。
 
 不得用其他文档中的旧描述覆盖 `AGENTS.md` 的规则。若内容冲突，先停止相关写入、部署或真机操作，并按 `AGENTS.md` 处理。
 
