@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 import hashlib
 import importlib.util
+import math
 from pathlib import Path
 import threading
 import time
@@ -19,6 +20,7 @@ SCENE_PROFILE = "table_books_v1"
 CART_SCENE_TASK = "scene_cart_loading_segmentation"
 CART_SCENE_PROFILE = "cart_loading_v1"
 CART_SCENE_CLASSES = ("cart_body",)
+SHELF_OCR_TASK = "shelf_label_ocr"
 VISION_METHOD = "/bookbot.vision.v2.VisionService/Infer"
 MAX_REQUEST_BYTES = 64 * 1024 * 1024
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -37,6 +39,13 @@ class SceneMask:
     rle_counts: tuple[int, ...]
     image_width: int
     image_height: int
+
+
+@dataclass(frozen=True)
+class OcrLabel:
+    text: str
+    confidence: float
+    polygon_px: tuple[tuple[float, float], ...]
 
 
 def grpc_channel_options(server_name):
@@ -261,6 +270,77 @@ class BookVisionClient:
         color.payload_sha256 = hashlib.sha256(color.payload).hexdigest()
         return request
 
+    def _make_ocr_request(
+        self,
+        image_bgr,
+        *,
+        captured_at_ns,
+        base_motion_epoch,
+        head_motion_epoch,
+        viewpoint_id,
+    ):
+        from config import (
+            BOOK_OCR_CONFIG_HASH,
+            BOOK_OCR_INVENTORY_CATALOG_HASH,
+            BOOK_OCR_MODEL_VERSION,
+            BOOK_OCR_VIEWPOINT_LAYOUT_HASH,
+        )
+
+        image = np.asarray(image_bgr)
+        if image.dtype != np.uint8 or image.ndim != 3 or image.shape[2] != 3:
+            raise BookVisionError("book_ocr_image_must_be_bgr8")
+        image = np.ascontiguousarray(image)
+        if type(captured_at_ns) is not int or captured_at_ns <= 0:
+            raise BookVisionError("book_ocr_capture_time_invalid")
+        if not base_motion_epoch or not head_motion_epoch or not viewpoint_id:
+            raise BookVisionError("book_ocr_capture_identity_missing")
+
+        with self._sequence_lock:
+            self._sequence += 1
+            sequence = self._sequence
+        lifetime_ns = int(min(self.settings.timeout_s, 2.0) * 1_000_000_000)
+        deadline_ns = captured_at_ns + lifetime_ns
+        request_id = f"fruittest-ocr-{uuid.uuid4()}"
+        capture_id = f"head-ocr-{captured_at_ns}"
+        request = self.pb2.InferRequest()
+        header = request.header
+        header.schema_version = 2
+        header.mission_run_id = "fruittest-book-perception"
+        header.stage_id = "stage2-cart-book-ocr"
+        header.request_id = request_id
+        header.correlation_id = request_id
+        header.sequence = sequence
+        header.issued_at_ns = captured_at_ns
+        header.not_before_ns = captured_at_ns
+        header.deadline_ns = deadline_ns
+        header.expected_output_frame = "base_link"
+        header.config_hash = BOOK_OCR_CONFIG_HASH
+        header.calibration_version = self.settings.calibration_version
+
+        request.task = SHELF_OCR_TASK
+        request.viewpoint_id = str(viewpoint_id)
+        request.expected_source = self.settings.expected_source
+        request.expected_worker_id = self.settings.expected_worker_id
+        request.expected_model_version = BOOK_OCR_MODEL_VERSION
+        request.viewpoint_layout_hash = BOOK_OCR_VIEWPOINT_LAYOUT_HASH
+        request.inventory_catalog_hash = BOOK_OCR_INVENTORY_CATALOG_HASH
+        capture = request.captures.add()
+        capture.capture_id = capture_id
+        capture.camera_id = "head_rgbd"
+        capture.base_motion_epoch = str(base_motion_epoch)
+        capture.head_motion_epoch = str(head_motion_epoch)
+        capture.sequence_index = 0
+        color = capture.color
+        color.camera_id = "head_rgbd"
+        color.optical_frame_id = "head_rgbd_color_optical_frame"
+        color.captured_at_ns = captured_at_ns
+        color.encoding = "bgr8"
+        color.width = int(image.shape[1])
+        color.height = int(image.shape[0])
+        color.payload = image.tobytes()
+        color.payload_sha256 = hashlib.sha256(color.payload).hexdigest()
+        return request
+
     def detect(
         self,
         image_bgr,
@@ -306,6 +386,83 @@ class BookVisionClient:
             profile=CART_SCENE_PROFILE,
             semantic_classes=CART_SCENE_CLASSES,
         )
+
+    def detect_labels(
+        self,
+        image_bgr,
+        *,
+        captured_at_ns,
+        base_motion_epoch,
+        head_motion_epoch,
+        viewpoint_id=CART_SCENE_TASK,
+    ):
+        from config import BOOK_OCR_CONFIG_HASH, BOOK_OCR_MODEL_VERSION
+
+        request = self._make_ocr_request(
+            image_bgr,
+            captured_at_ns=captured_at_ns,
+            base_motion_epoch=base_motion_epoch,
+            head_motion_epoch=head_motion_epoch,
+            viewpoint_id=viewpoint_id,
+        )
+        remaining_s = (request.header.deadline_ns - self._clock_ns()) / 1_000_000_000
+        if remaining_s <= 0:
+            raise BookVisionError("book_ocr_capture_expired")
+        try:
+            response = self._rpc(
+                request,
+                timeout=min(self.settings.timeout_s, remaining_s),
+            )
+        except Exception as error:
+            raise BookVisionError("book_ocr_rpc_failed") from error
+        header = getattr(response, "header", None)
+        if (
+            getattr(response, "task", None) != SHELF_OCR_TASK
+            or header is None
+            or getattr(header, "source", None) != self.settings.expected_source
+            or getattr(header, "worker_id", None) != self.settings.expected_worker_id
+            or getattr(header, "model_version", None) != BOOK_OCR_MODEL_VERSION
+            or getattr(header, "config_hash", None) != BOOK_OCR_CONFIG_HASH
+        ):
+            raise BookVisionError("book_ocr_response_identity_mismatch")
+
+        result = []
+        for row in getattr(response, "shelf_labels", ()):
+            text = str(getattr(row, "observed_label", ""))
+            if (
+                not text
+                or not bool(getattr(row, "direct_pixel_evidence", False))
+                or bool(getattr(row, "inferred", False))
+            ):
+                continue
+            polygon = tuple(
+                (float(point.x), float(point.y))
+                for point in getattr(row, "polygon_px", ())
+            )
+            if len(polygon) != 4 or not all(
+                math.isfinite(value) for point in polygon for value in point
+            ):
+                raise BookVisionError("book_ocr_polygon_invalid")
+            confidences = tuple(
+                float(candidate.confidence)
+                for candidate in getattr(row, "text_candidates", ())
+                if candidate.text == text
+                and bool(getattr(candidate, "direct_pixel_evidence", False))
+            )
+            confidence = max(
+                confidences,
+                default=float(getattr(row, "ocr_support", 0.0)),
+            )
+            if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+                raise BookVisionError("book_ocr_confidence_invalid")
+            result.append(
+                OcrLabel(
+                    text=text,
+                    confidence=confidence,
+                    polygon_px=polygon,
+                )
+            )
+        return tuple(sorted(result, key=lambda item: item.confidence, reverse=True))
 
     def detect_scene(
         self,

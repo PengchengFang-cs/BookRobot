@@ -13,6 +13,7 @@ import math
 from pathlib import Path
 import re
 import sys
+import time
 import uuid
 
 REPLAY_ROOT = Path(
@@ -27,6 +28,7 @@ SHELF_PLACE_Y_TOLERANCE_M = 0.020
 SHELF_PLACE_YAW_TOLERANCE_RAD = math.radians(5.0)
 MAXIMUM_ALIGNMENT_CORRECTIONS = 3
 DEFAULT_BOOK_WIDTH_M = 0.05
+VERTICAL_SPINE_GRASP_HEIGHT_M = 0.13
 SHELF_SCAN_HEAD_ANGLES_DEG = (-45, -30, -15, 0, 15, 30, 45)
 
 BOOK_LABEL_RE = re.compile(r"^A[0-9]{2}-[0-9]{4}$")
@@ -63,6 +65,12 @@ class TrackedBook:
     suction_point_m: tuple[float, float, float]
     label: BookLabel | None = None
     actual_level: int | None = None
+
+
+@dataclass(frozen=True)
+class CartBookTrackingKey:
+    order_from_right: int
+    label_text: str
 
 
 @dataclass(frozen=True)
@@ -183,7 +191,7 @@ PICK_REFERENCE_POINT_M_BY_ASSET = {
     "DR8.1": None,
     "DR9.2": None,
     "DR10.1": None,
-    "DR11.2": None,
+    "DR11.2": (0.792389, -0.343970, 1.036510),
 }
 PLACE_REFERENCE_POINT_M_BY_ASSET = {
     "DR5.1": None,
@@ -196,10 +204,9 @@ PLACE_REFERENCE_YAW_RAD_BY_ASSET = {
     "DR7.1": None,
 }
 
-# The current repository has no Wanda-side OCR transport, vertical-book
-# geometry, shelf target detector, or Stage 2/3 coarse-route implementation.
-# Keep them disabled until the corresponding functions below are filled.
-OCR_TRANSPORT_READY = False
+# The cart-book OCR and vertical-spine path is ready for the one-book entry.
+# Shelf perception and Stage 2/3 coarse routes remain explicit gaps.
+OCR_TRANSPORT_READY = True
 STAGE23_PERCEPTION_READY = False
 STAGE23_COARSE_NAVIGATION_READY = False
 
@@ -260,6 +267,22 @@ def require_stage23_configuration():
             "Stage 2/3尚有未补接口；未初始化ROS，也不会产生机器人运动：\n- "
             + "\n- ".join(pending)
         )
+
+
+def require_stage2_pick_one_configuration():
+    frame_index = D01_EVENT_FRAME_BY_ASSET["DR11.2"]
+    if (
+        type(frame_index) is not int
+        or frame_index < 0
+        or frame_index >= ASSETS["DR11.2"].frame_count
+    ):
+        raise RuntimeError("DR11.2吸盘开启帧无效")
+    try:
+        _point3(PICK_REFERENCE_POINT_M_BY_ASSET["DR11.2"])
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("DR11.2第0帧视觉参考点无效") from error
+    if not OCR_TRANSPORT_READY:
+        raise RuntimeError("Wanda到RTX 5090的OCR传输接口未就绪")
 
 
 def parse_book_label(text):
@@ -460,22 +483,214 @@ def infer_shelf_target(
     )
 
 
-def build_ocr_client():
-    """Pending: construct the reviewed Wanda-to-5090 OCR client once."""
+@dataclass(frozen=True)
+class _VerticalCartBook:
+    observation: object
+    mask: object
+    suction_point_m: tuple[float, float, float]
 
-    raise NotImplementedError("待补Wanda到RTX 5090的OCR传输接口")
+
+@dataclass(frozen=True)
+class _VerticalCartFrame:
+    color_bgr: object
+    books_right_to_left: tuple[_VerticalCartBook, ...]
+    base_motion_epoch: str
+    head_motion_epoch: str
+
+
+def build_ocr_client():
+    """Construct one reusable OCR client over the existing 7443 mTLS channel."""
+
+    from book_rpc import BookVisionClient
+
+    return BookVisionClient.from_config()
+
+
+def _vertical_spine_suction_point(
+    *,
+    mask,
+    depth_m,
+    intrinsics,
+    camera_to_base,
+):
+    import numpy as np
+
+    depth = np.asarray(depth_m, dtype=float)
+    spine = np.asarray(mask, dtype=bool)
+    if depth.shape != spine.shape or not np.any(spine):
+        raise RuntimeError("竖直书脊深度不可用")
+
+    row_points = []
+    for row in np.flatnonzero(np.any(spine, axis=1)):
+        columns = np.flatnonzero(spine[row])
+        if columns.size == 0:
+            continue
+        u = (float(columns[0]) + float(columns[-1])) / 2.0
+        column = int(round(u))
+        y0, y1 = max(0, int(row) - 2), min(depth.shape[0], int(row) + 3)
+        x0, x1 = max(0, column - 2), min(depth.shape[1], column + 3)
+        patch_depth = depth[y0:y1, x0:x1]
+        patch_mask = spine[y0:y1, x0:x1]
+        valid = patch_depth[
+            patch_mask
+            & np.isfinite(patch_depth)
+            & (patch_depth >= 0.20)
+            & (patch_depth <= 2.50)
+        ]
+        if valid.size == 0:
+            continue
+        distance_m = float(np.median(valid))
+        camera_point = (
+            (u - float(intrinsics.cx)) * distance_m / float(intrinsics.fx),
+            (float(row) - float(intrinsics.cy))
+            * distance_m
+            / float(intrinsics.fy),
+            distance_m,
+        )
+        base_point = _point3(camera_to_base(camera_point))
+        row_points.append((u, float(row), base_point))
+
+    if not row_points:
+        raise RuntimeError("竖直书脊深度不可用")
+    bottom = min(row_points, key=lambda item: item[2][2])
+    target_z = bottom[2][2] + VERTICAL_SPINE_GRASP_HEIGHT_M
+    return min(row_points, key=lambda item: abs(item[2][2] - target_z))[2]
+
+
+def _capture_vertical_cart_frame(vision):
+    import numpy as np
+
+    from book_geometry import CameraIntrinsics, decode_bbox_rle
+    from geometry import camera_point_to_base
+
+    capture = vision.capture_book_frame(scan_angle_deg=0)
+    if capture is None:
+        raise RuntimeError("没有取得新的同步RGB-D")
+    color, depth = vision._snapshot_arrays(capture.snapshot)
+    if color is None:
+        raise RuntimeError("没有取得新的同步RGB-D")
+
+    snapshot = capture.snapshot
+    joints = capture.joints
+    captured_at_ns = int(snapshot.captured_at_ns)
+    base_motion_epoch = f"stage2-cart-book-base-{captured_at_ns}"
+    head_motion_epoch = f"stage2-cart-book-head-{captured_at_ns}"
+    observations = vision.book_client.detect(
+        color,
+        captured_at_ns=time.time_ns(),
+        base_motion_epoch=base_motion_epoch,
+        head_motion_epoch=head_motion_epoch,
+    )
+    intrinsics = CameraIntrinsics(
+        fx=float(snapshot.info.k[0]),
+        fy=float(snapshot.info.k[4]),
+        cx=float(snapshot.info.k[2]),
+        cy=float(snapshot.info.k[5]),
+    )
+    body = float(joints["body_joint"])
+    head_yaw = float(joints["joint_head0"])
+    head_pitch = float(joints["joint_head1"])
+    books = []
+    for observation in observations:
+        mask = decode_bbox_rle(
+            image_shape=depth.shape,
+            bbox=observation.bbox,
+            counts=observation.rle_counts,
+        )
+        point = _vertical_spine_suction_point(
+            mask=mask,
+            depth_m=depth,
+            intrinsics=intrinsics,
+            camera_to_base=lambda camera_point: camera_point_to_base(
+                camera_point,
+                body,
+                head_yaw,
+                head_pitch,
+            ),
+        )
+        books.append(
+            _VerticalCartBook(
+                observation=observation,
+                mask=np.asarray(mask, dtype=bool),
+                suction_point_m=point,
+            )
+        )
+    if not books:
+        raise RuntimeError("未检测到推车竖直书本")
+    books.sort(
+        key=lambda book: (
+            float(book.observation.bbox[0])
+            + float(book.observation.bbox[2]) / 2.0
+        ),
+        reverse=True,
+    )
+    return _VerticalCartFrame(
+        color_bgr=np.ascontiguousarray(color),
+        books_right_to_left=tuple(books),
+        base_motion_epoch=base_motion_epoch,
+        head_motion_epoch=head_motion_epoch,
+    )
+
+
+def _ocr_label_for_book(frame, book, ocr_client):
+    labels = ocr_client.detect_labels(
+        frame.color_bgr,
+        captured_at_ns=time.time_ns(),
+        base_motion_epoch=frame.base_motion_epoch,
+        head_motion_epoch=frame.head_motion_epoch,
+    )
+    height, width = book.mask.shape
+    associated = []
+    for label in labels:
+        center_u, center_v = ocr_box_center(label.polygon_px)
+        column = int(round(center_u))
+        row = int(round(center_v))
+        if not (0 <= column < width and 0 <= row < height):
+            continue
+        if not bool(book.mask[row, column]):
+            continue
+        try:
+            parsed = validate_book_label(label.text)
+        except RuntimeError:
+            continue
+        associated.append((float(label.confidence), parsed))
+    if not associated:
+        raise RuntimeError("OCR无法识别")
+    return max(associated, key=lambda item: item[0])[1]
 
 
 def observe_rightmost_cart_book(vision, ocr_client):
-    """Pending: vertical-spine detection, mask-associated OCR and 13 cm point."""
+    """Select the robot-view rightmost spine and associate its complete OCR."""
 
-    raise NotImplementedError("待补推车竖直书脊感知和OCR关联接口")
+    frame = _capture_vertical_cart_frame(vision)
+    selected = frame.books_right_to_left[0]
+    label = _ocr_label_for_book(frame, selected, ocr_client)
+    return TrackedBook(
+        tracking_key=CartBookTrackingKey(
+            order_from_right=0,
+            label_text=label.text,
+        ),
+        suction_point_m=selected.suction_point_m,
+        label=label,
+    )
 
 
 def observe_tracked_book(vision, tracking_key, *, actual_level=None):
-    """Pending: re-detect and associate the same cart or shelf book."""
+    """Reobserve the same cart book by its stable right-to-left order."""
 
-    raise NotImplementedError("待补竖直书本重检测与重关联接口")
+    if not isinstance(tracking_key, CartBookTrackingKey):
+        raise RuntimeError("推车书本跟踪标识无效")
+    frame = _capture_vertical_cart_frame(vision)
+    index = int(tracking_key.order_from_right)
+    if index < 0 or index >= len(frame.books_right_to_left):
+        raise RuntimeError("无法重关联同一本推车书")
+    selected = frame.books_right_to_left[index]
+    return TrackedBook(
+        tracking_key=tracking_key,
+        suction_point_m=selected.suction_point_m,
+        label=parse_book_label(tracking_key.label_text),
+        actual_level=actual_level,
+    )
 
 
 def observe_shelf_target(vision, ocr_client, label):
@@ -615,6 +830,20 @@ def _build_replay_runtime(asset, *, joint_positions, spin_feedback):
     )
     runtime.entry["speed"] = 1.0
     return runtime
+
+
+def build_stage2_pick_one_replayer(*, joint_positions, spin_feedback):
+    from book_pick_replay import Stage1BookPickReplayer
+
+    asset = ASSETS["DR11.2"]
+    return Stage1BookPickReplayer(
+        runtime=_build_replay_runtime(
+            asset,
+            joint_positions=joint_positions,
+            spin_feedback=spin_feedback,
+        ),
+        keep_runtime_open=True,
+    )
 
 
 def build_stage23_replayers(*, joint_positions, spin_feedback):
@@ -832,6 +1061,35 @@ def align_shelf_target(
         ))
         correction_count += 1
         target = observe_shelf_target(vision, ocr_client, label)
+
+
+def run_stage2_pick_one(
+    vision,
+    ocr_client,
+    pick_navigator,
+    cart_pick_replayer,
+    *,
+    say=print,
+):
+    say("恢复DR11.2第0帧全身姿态，底盘保持静止")
+    cart_pick_replayer.prepare()
+    selected = observe_rightmost_cart_book(vision, ocr_client)
+    label = validate_book_label(selected.label)
+    say(f"最右侧书OCR={label.text}")
+    align_tracked_book(
+        vision,
+        pick_navigator,
+        selected,
+        PICK_REFERENCE_POINT_M_BY_ASSET["DR11.2"],
+        say=say,
+    )
+    say("启动DR11.2；回放第0帧立即开启右吸盘")
+    result = cart_pick_replayer.pick(0.0, check_holding=False)
+    say(
+        f"DR11.2完成并停止: frames={result.frames_sent}, "
+        "右吸盘保持开启"
+    )
+    return result
 
 
 def run_stage2(
