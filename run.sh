@@ -36,6 +36,7 @@ if [[ "$ENTRYPOINT" == "$DIR/mission_main2.py" || \
       " $* " == *" --book-place "* || \
       " $* " == *" --book-pick-place "* || \
       " $* " == *" --stage1-loop "* || \
+      " $* " == *" --stage1-second-book "* || \
       " $* " == *" --cart-perception "* || \
       " $* " == *" --cart-scan-navigation "* || \
       " $* " == *" --cart-approach-navigation "* ]]; then

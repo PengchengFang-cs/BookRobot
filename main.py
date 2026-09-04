@@ -78,6 +78,11 @@ def arguments():
         action="store_true",
         help="当前优化实验连续完成两本书的抓取、放置与一次返回书桌粗导航",
     )
+    operation.add_argument(
+        "--stage1-second-book",
+        action="store_true",
+        help="从第一本已放入推车的位置返回书桌，只完成第二本并放入槽位2",
+    )
     parser.add_argument(
         "--skip-stage1-initial-coarse",
         action="store_true",
@@ -152,6 +157,7 @@ def run_real(args):
             or args.book_place
             or args.book_pick_place
             or args.stage1_loop
+            or args.stage1_second_book
             or args.cart_perception
             or args.cart_scan_navigation
             or args.cart_approach_navigation
@@ -244,13 +250,17 @@ def run_real(args):
                     timeout_s=0.5,
                 ),
             )
-            if args.stage1_loop:
+            if args.stage1_loop or args.stage1_second_book:
                 from book_pick_replay import Stage1BookPickReplayer
                 from book_place_replay import Stage1BookPlaceReplayer
 
+                first_book_index = 2 if args.stage1_second_book else 1
+                experiment_book_count = (
+                    1 if args.stage1_second_book else STAGE1_EXPERIMENT_BOOK_COUNT
+                )
                 with timed_phase(
                     "stage1_total",
-                    book_count=STAGE1_EXPERIMENT_BOOK_COUNT,
+                    book_count=experiment_book_count,
                     skip_initial_coarse=bool(args.skip_stage1_initial_coarse),
                     book_align_mode=args.book_align_mode,
                     book_coarse=bool(args.book_coarse),
@@ -290,9 +300,17 @@ def run_real(args):
                             )
                             with timed_phase(
                                 "initial_table_coarse",
-                                skipped=bool(args.skip_stage1_initial_coarse),
+                                skipped=(
+                                    bool(args.skip_stage1_initial_coarse)
+                                    and not args.stage1_second_book
+                                ),
                             ):
-                                if not args.skip_stage1_initial_coarse:
+                                if args.stage1_second_book:
+                                    say("从第一本放书位置返回书桌寻找第二本")
+                                    Stage1TableReturnNavigator(
+                                        vision=vision,
+                                    ).navigate()
+                                elif not args.skip_stage1_initial_coarse:
                                     CartPlaceDockingNavigator().set_observation_torso(0.20)
                                     vision.set_head_pose(yaw_rad=0.0, pitch_rad=0.25)
                                     say("扫描书本并沿直角路线到达第一轮抓书位置")
@@ -309,10 +327,11 @@ def run_real(args):
                                 replay_module._stop_service("manipulation.service")
                             with timed_phase(
                                 "stage1_two_book_core",
-                                book_count=STAGE1_EXPERIMENT_BOOK_COUNT,
+                                book_count=experiment_book_count,
                             ):
                                 for book_index in range(
-                                    1, STAGE1_EXPERIMENT_BOOK_COUNT + 1
+                                    first_book_index,
+                                    STAGE1_EXPERIMENT_BOOK_COUNT + 1,
                                 ):
                                     with book_scope(book_index):
                                         say(
