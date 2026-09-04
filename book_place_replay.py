@@ -1,6 +1,8 @@
 """Stage-1 cart Place using the complete recorded DataReplay 2.4 episode."""
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+import os
 from pathlib import Path
 import sys
 import uuid
@@ -21,6 +23,87 @@ PLACE_ASSET_PATH = Path(
 )
 PLACE_FRAME_COUNT = 388
 PLACE_D01_STOP_FRAME_INDEX = 190
+PLACE_CAPTURE_FRAME_INDICES = (164, 169, 174, 179, 184, 189)
+
+
+class _PlaceFrameCapture:
+    """Save selected live head-camera frames without blocking replay pacing."""
+
+    def __init__(self):
+        record_dir = os.environ.get("FPC_EXPERIMENT_RECORD_DIR")
+        if not record_dir:
+            raise RuntimeError("FPC_EXPERIMENT_RECORD_DIR is required for Place capture")
+        self.record_dir = Path(record_dir)
+        self.bridge = None
+        self.latest_color = None
+        self.subscription = None
+        self.executor = ThreadPoolExecutor(max_workers=1)
+        self.futures = []
+
+    def start(self, node):
+        from cv_bridge import CvBridge
+        from rclpy.qos import QoSProfile, ReliabilityPolicy
+        from sensor_msgs.msg import Image
+
+        from config import COLOR_TOPIC
+
+        self.record_dir.mkdir(parents=True, exist_ok=True)
+        self.bridge = CvBridge()
+        qos = QoSProfile(depth=2, reliability=ReliabilityPolicy.RELIABLE)
+        self.subscription = node.create_subscription(
+            Image,
+            COLOR_TOPIC,
+            self._receive_color,
+            qos,
+        )
+
+    def _receive_color(self, message):
+        self.latest_color = message
+
+    def capture(self, frame_index):
+        if frame_index not in PLACE_CAPTURE_FRAME_INDICES:
+            return
+        if self.latest_color is None:
+            return
+        output_path = self.record_dir / f"place_frame_{frame_index:03d}.jpg"
+        self.futures.append((
+            frame_index,
+            output_path,
+            self.executor.submit(self._write, self.latest_color, output_path),
+        ))
+
+    def _write(self, message, output_path):
+        import cv2
+
+        image = self.bridge.imgmsg_to_cv2(message, desired_encoding="bgr8")
+        if not cv2.imwrite(str(output_path), image):
+            raise RuntimeError(f"failed to write {output_path}")
+        return image.shape
+
+    def finish(self, node):
+        self.close(node)
+        captured = []
+        for frame_index, output_path, future in self.futures:
+            shape = future.result()
+            print(
+                f"PLACE_CAPTURE frame={frame_index} path={output_path} "
+                f"shape={shape}",
+                flush=True,
+            )
+            captured.append(frame_index)
+        if tuple(captured) != PLACE_CAPTURE_FRAME_INDICES:
+            raise RuntimeError(
+                "Place capture frames incomplete: "
+                f"expected={PLACE_CAPTURE_FRAME_INDICES}, actual={tuple(captured)}"
+            )
+
+    def close(self, node):
+        if self.subscription is not None:
+            node.destroy_subscription(self.subscription)
+            self.subscription = None
+        if self.executor is not None:
+            self.executor.shutdown(wait=True)
+            self.executor = None
 
 
 @dataclass(frozen=True)
@@ -32,6 +115,22 @@ class BookPlaceReplayResult:
 
 
 class LegacyV3PlaceRuntime(LegacyV3PickRuntime):
+    def _publish_recorded_frames(
+        self, module, node, episode, entry, context, deadline, before
+    ):
+        capture = _PlaceFrameCapture()
+        capture.start(node)
+        self.frame_callback = capture.capture
+        try:
+            result = super()._publish_recorded_frames(
+                module, node, episode, entry, context, deadline, before
+            )
+            capture.finish(node)
+            return result
+        finally:
+            self.frame_callback = None
+            capture.close(node)
+
     def replay_pick(self, episode, *, restore_frame_zero=True):
         delegate = self.replay_adapter.delegate
         original = delegate.replay_start_check

@@ -585,6 +585,9 @@ class LegacyV3PickRuntime:
             adapter._frames_sent += 1
             if hasattr(module.rclpy, "spin_once"):
                 module.rclpy.spin_once(node, timeout_sec=0.0)
+            frame_callback = getattr(self, "frame_callback", None)
+            if frame_callback is not None:
+                frame_callback(frame)
 
             for index, event in enumerate(pending):
                 due = (
