@@ -32,10 +32,13 @@ def arguments():
     parser.add_argument(
         "--book-align-mode",
         choices=("legacy", "vector"),
-        default="legacy",
-        help="书本底盘对位方式；与Stage 1保持一致",
+        default="vector",
+        help="书本底盘对位方式；默认使用 vector，legacy 已禁用",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.book_align_mode == "legacy":
+        parser.error("--book-align-mode legacy 已禁用；请使用 vector")
+    return args
 
 
 def run_real(args):

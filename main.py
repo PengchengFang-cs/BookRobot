@@ -101,8 +101,8 @@ def arguments():
     parser.add_argument(
         "--book-align-mode",
         choices=("legacy", "vector"),
-        default="legacy",
-        help="书本底盘对位方式；默认保留原 legacy，vector 合并 X/Y 位移",
+        default="vector",
+        help="书本底盘对位方式；默认使用 vector，legacy 已禁用",
     )
     parser.add_argument(
         "--book-coarse",
@@ -122,7 +122,10 @@ def arguments():
         default=1,
         help="当前书本对应的小推车槽位，1为机器人视角最右侧",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.book_align_mode == "legacy":
+        parser.error("--book-align-mode legacy 已禁用；请使用 vector")
+    return args
 
 
 def run_fake(args):
