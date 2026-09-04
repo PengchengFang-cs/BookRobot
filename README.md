@@ -1,226 +1,79 @@
-# BookRobot 当前开发入口
+# BookRobot
 
-当前正在推进 Stage 2：从推车取三本书并分别放入书架第三、第四和第五层。Stage 1
-桌面书搬运到推车的主流程已经打通，仅保留速度提升和 Place 前后距离微调两项待办。
-当前状态和统一阶段定义见 `docs/CURRENT_STATUS.md` 与 `docs/ROADMAP.md`。
+Wanda 图书机器人比赛项目。机器人使用头部 RGB-D 相机采集现场图像，将彩色图发送到
+RTX 5090 上的 Grounding DINO + SAM 服务完成二维检测与分割，再在 Wanda 本机结合
+深度、相机内参和机器人姿态计算三维目标，最后通过底盘对位与 DataReplay 完成抓放。
 
-这个工作副本正在把 FruitTest 的水果颜色识别替换为书本视觉。当前已经接入的链路是：
+## 当前进度
 
-```text
-Wanda 头部彩色图
-  -> 本机 127.0.0.1:7443 转发
-  -> RTX 5090 Grounding DINO + SAM 场景分割
-  -> 书本 bbox + mask
-  -> Wanda 本地对齐深度、内参和头部姿态
-  -> base_link 下的封面吸取点
-```
+项目目前正式进入 **Stage 2**。
 
-桌面平放书本的吸取点固定为：从机器人视角下缘沿长轴向内 `0.13 m`，再从右边缘沿短轴向左 `0.10 m`。如果书本尺寸放不下这两个偏移和 `0.015 m` 的边缘余量，就不输出坐标。
+- **Stage 1：桌面书搬运到推车。** 主流程已经打通，历史上完成过三本书连续真机
+  循环；当前两本速度实验也已经跑通。遗留待办只有两项：继续提升整体速度，以及
+  小幅微调推车 Place 的前后距离估计。此前整体增加 `30 mm` 的补偿已确认过度并撤销。
+- **Stage 2：推车三本书归架。** 当前开发主线。从推车依次取出三本书，通过 OCR
+  确定目标层和编号，再分别放到书架第三、第四或第五层的正确位置。
+- **Stage 3：纠正唯一错放书。** Stage 2 完成后扫描书架，通过 OCR 和书位关系找到
+  唯一错放书，将其取出并放回正确空位。
 
-Wanda 当前 Orbbec 驱动虽然发布在 `image_raw` 名称下，但已经启用硬件对齐、彩色目标对齐、深度注册和帧同步；实际彩色与深度消息同为 `1920×1080`、同属彩色光学 frame。代码会在最近几帧中配对同一组 RGB-D/CameraInfo，并使用最接近彩色图拍摄时刻的头部和升降柱关节值。不同 capture 不会混用，同一 capture 也不会重复请求 5090。
+旧文档曾把“感知、底盘、抓取、demo、比赛集成”等开发里程碑称为 Stage 1～5；
+该编号方式已经废弃，不再用于描述当前比赛流程。
 
-只测试感知时使用：
+## Stage 1 当前结果
 
-```bash
-cd /home/unix_ai/fpc
-source /opt/ros/humble/setup.bash
-source /home/unix_ai/work/controller/install/setup.bash
-export ROS_DOMAIN_ID=69
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-export CYCLONEDDS_URI=file:///home/unix_ai/config/cyclonedds.xml
-python3 test_book_perception.py
-```
-
-这个入口只创建相机、关节状态和 TF 订阅，不导入导航或机械臂模块。成功时输出：
-
-```json
-{"book_count": 1, "books": [{"bbox_xywh": [10, 20, 30, 40], "confidence": 0.9, "suction_point_m": [0.41, -0.07, 0.82]}], "frame_id": "base_link", "ok": true}
-```
-
-结果按置信度从高到低排列，只保留置信度不低于 `0.25` 且三维几何有效的书本，最多返回 5 本；不足 5 本时返回实际数量。
-
-## Stage 1 DataReplay 对位与抓取
-
-Stage 1 默认不执行 `0.48 m` 粗定位；它只在用户已经把机器人放到桌前后，恢复 Pick 录制第 0 帧的书—机器人相对位置。远距离粗定位是显式可选项：
+Stage 1 已经串联以下完整流程：
 
 ```text
-当前 RGB-D 找到并锁定目标书
-  -> 读取 config/stage1_pick_reference.json
-  -> 当前书的 13 cm / 10 cm 点减去录制混合参考
-     （X/Z 取第 0 帧规则点，Y 取 frame 158 实际接触点）
-  -> X/Y 底盘恢复第 0 帧位置（X 允许 ±20 mm，Y 允许 ±10 mm）
-  -> Z 平移整条 Pick torso 轨迹
-  -> 从实时反馈平滑恢复第 0 帧双臂、头部和升降柱姿态，底盘保持零速
-  -> 完整发布新 1.2 的原始 333 帧：底盘、双臂、头部、升降柱、左夹爪和右灵巧手
-  -> 发布第 20 帧后异步启动 D01 吸附，333 帧继续保持原时间戳节拍
+桌面书检测与精定位
+→ Pick DataReplay
+→ 粗导航到推车
+→ 平台与槽位精定位
+→ Place DataReplay
+→ 返回书桌继续下一本
 ```
 
-只有显式添加 `--book-coarse` 时，程序才先用 `0.48 m` 进入视觉工作范围，再通过 odom/IMU 重关联同一本书并执行上述第 0 帧精确对位。`--check` 不会默认运行，并与 `--book-pick` 互斥。
+当前两本实验在不计算第一次到书桌粗导航时，核心耗时约 `335 s`，尚未达到五分钟
+目标。最近一次 Place 使用的 `30 mm` 前后补偿过度，当前代码已经恢复到补偿前参考，
+后续需要从该参考继续做小幅调整。
 
-参考 JSON 来自只读 Pick HDF5：第 0 帧提供目标书的 13 cm/10 cm 规则点、
-尺寸和长轴；frame 158 的蓝色吸盘接触端提供实际左右 Y。由于新录制没有
-横移或旋转，接触 Y 可用于修正左右，而 X/Z 仍使用第 0 帧规则点。标定命令
-只读取录制数据、调用书本视觉并生成 JSON/叠加图，不发送机器人运动命令：
+## Stage 2 当前入口
 
-```bash
-python3 scripts/calibrate_replay_pick_reference.py \
-  --h5 /home/unix_ai/DataCollector/DataReplay_v3/v3_assets/takes/20260819_libraryrobot_datareplay/pi05_wanda_dr1.2_20260819_195231.h5 \
-  --reference-frame 0 \
-  --contact-frame 158 \
-  --suction-roi 80,80,100,144 \
-  --output config/stage1_pick_reference.json \
-  --overlay logs/stage1_pick_reference_overlay.jpg
-```
-
-`./run.sh --book-align --book-align-mode vector` 默认从当前位置执行第 0 帧底盘对位并在最终测量后退出；`./run.sh --book-pick --book-align-mode vector` 在同一结果上继续执行一次完整 Pick。两者都要求参考 JSON 已经生成。
-
-需要程序先做粗定位时，显式使用 `./run.sh --book-pick --book-coarse --book-align-mode vector`。不加 `--book-coarse` 就不会执行旧 `0.48 m` 粗移动。
-
-当前新 `1.2` 的 frame 0 规则点为 `base_link=(0.8981937,-0.2520129,0.7568440) m`；frame 158 蓝色吸盘接触端为像素 `(146.5,183.0)`，投影 Y 为 `-0.2589220 m`。运行参考因此为 `base_link=(0.8981937,-0.2589220,0.7568440) m`。程序仍以当前书的 13/10 点做对位；只用接触帧校正录制资产的左右 Y，不把接触帧 X 当成起始位置。
-
-当前切换已完成离线验证；部署操作本身不会启动 Pick，新的真机抓取仍需单独执行。
-
-## 新录制 DataReplay 评分与选用
-
-本批新录制 DataReplay 统一使用同一动作的最后一次录制：
-
-- 五层放书：`DR5.1`，100 分。
-- 四层放书：`DR6.1` 95 分，`DR6.2` 95 分，`DR6.3` 100 分，`DR6.4` 100 分；最终使用 `DR6.4`。
-- 三层放书：`DR7.1`，100 分。
-- 四层吸书：`DR8.1`，未标注评分。
-- 三层吸书：`DR9.1` 95 分，`DR9.2` 100 分；最终使用 `DR9.2`。
-- 五层吸书：`DR10.1`，100 分。
-- 从推车上吸书：`DR11.1` 95 分，`DR11.2` 100 分；最终使用 `DR11.2`。
-
-当前最终选用集合为：`DR5.1`、`DR6.4`、`DR7.1`、`DR8.1`、`DR9.2`、`DR10.1`、`DR11.2`。
-
-运行前还需要满足：
-
-- 机器人本机 `127.0.0.1:7443` 已转发到 5090 正在运行的视觉 listener。
-- `/var/lib/bookbot/vision-mtls/` 中已有 Wanda 客户端 mTLS 文件。
-- `/var/lib/bookbot/task3/release_inputs/vision_generated/vision_v2_pb2.py` 已安装。
-- 环境变量 `BOOK_VISION_MODEL_VERSION`、`BOOK_VISION_CONFIG_HASH`、`BOOK_VISION_CALIBRATION_VERSION` 已设置为本次已启动服务的准确身份。
-
-可用其他环境变量覆盖 endpoint、证书和 protobuf 路径；具体变量集中在 `config.py`。调试叠加图保存在 `logs/last_detection.jpg`。
-
-下面保留原始 FruitTest 的说明作为导航和机械臂参考；其中水果视觉描述不再适用于当前 `vision.py`。
-
----
-
-# 原始 FruitTest：听名字，找水果，拿回来
-
-这是一个故意写得很简单的 ROS 2 冒烟测试。主程序只做六件事：
-
-1. 等你说一种水果。
-2. 用头部 RGB-D 相机按颜色找水果，并算出三维坐标。
-3. 没看到就让 Nav2 原地转 90°，最多看四个方向。
-4. Nav2 先转向水果，再直线走到水果前方。
-5. MoveIt 规划右臂动作，夹爪拿起水果。
-6. Nav2 直线回到启动位置并恢复原朝向，松开水果，然后继续等下一句话。
-
-这是 5 米 × 5 米空场冒烟测试：导航只用 Nav2 的转向和直行行为，
-故意不做通用障碍物绕行。
-
-## 水果怎么摆
-
-- 机器人放在约 5 米 × 5 米空地中央。
-- 香蕉、苹果、橙子、梨分别放在机器人四周。
-- 模型颜色要鲜艳，彼此不要使用相同颜色。
-- 水果中心建议离地 `0.80～1.00 m`，放在小支架上；不要直接放地面。
-- 水果到机器人中心约 `1.0 m`。程序会停在水果前约 `0.48 m`，所以底盘通常实际走约 `0.52 m`。这样水果不会进入底盘内部，右臂也容易够到。
-- 在机器人启动位置右侧放一个小篮子。机器人回原点后会在收纳姿态直接松开夹爪。
-
-## 第一次可以做这些小测试
-
-```bash
-cd /home/unix_ai/FruitTest
-
-# 1. 完全不连接机器人，只看积木调用顺序
-./run.sh --fake --fruit 香蕉 --once
-
-# 2. 连接真机，但只检查相机、Nav2、关节状态和 MoveIt 规划，不运动
-./run.sh --check
-
-# 3. 可选：给 Nav2 和右臂发送“保持当前位置”的真实命令
-./run.sh --command-check
-
-# 4. 可选：底盘往返 40 cm、右臂小幅往返、夹爪开合
-./run.sh --motion-check
-
-# 如果只想单独测试一块积木
-./run.sh --base-motion-check
-./run.sh --arm-motion-check
-
-# 不放水果，在空中执行一次完整抓取动作
-./run.sh --pick-motion-check
-
-# 5. 真机只执行一次香蕉任务
-./run.sh --fruit 香蕉 --once
-```
-
-第二条命令看到下面这行才算通过：
+Stage 2/3 的任务编排入口为：
 
 ```text
-[检查通过] RGB-D、Nav2、关节状态、MoveIt 位姿规划都正常；没有产生运动。
+run.sh --stage23
+mission_main2.py
+mission2.py
 ```
 
-## 最终运行命令
+Stage 2 会复用 Stage 1 已有的视觉传输、底盘精定位和 DataReplay 桥。当前资产、
+执行顺序和剩余接口以交接文档及实际源码为准。
 
-```bash
-cd /home/unix_ai/FruitTest && ./run.sh
-```
+## 系统分工
 
-程序会先语音提示你打开遥控器并按一下机身“释放”键。它收到真实按钮
-事件并完成底盘释放后，才会说“已经准备好”。这时说“香蕉”“苹果”
-“橙子”或“梨”。完成一次后，它会继续等下一种水果。
+- **RTX 5090**：运行 Grounding DINO、SAM 和 OCR，返回二维视觉结果。
+- **Wanda**：采集 RGB-D，在本机完成深度投影与机器人坐标计算，并控制底盘、升降柱、
+  机械臂和吸盘。
+- **DataReplay**：恢复对应录像的第 0 帧全身姿态，并按录制时序执行完整动作。
 
-## 已做过的真机验证
+## 开发与部署
 
-- 头部 RGB-D、深度三维坐标、Nav2 action、关节状态都在线。
-- 当前真实空场依次搜索四种水果，结果全为 `None`，没有把柜门误认成水果。
-- Whisper 用真实麦克风听到“香蕉”并解析成 `banana`。
-- MoveIt 三个抓取位姿都能规划，完整空抓轨迹已经真实执行成功。
-- 右臂小幅往返实测 `0.042 rad`，回收误差 `0.014 rad`，夹爪开合成功。
-- Nav2 零转角 action 和右臂零位移轨迹都真实执行成功。
-- `DriveOnHeading` 真实接单并持续发布 `0.05 m/s`，超时后自动回到零速度。
-- 释放键 ROS 消息桥已经用真实消息类型验证。
+- 多人最终集成仓库：`/home/cvailab/Ruan/Library_306`
+- 已验证基线仓库：`/home/cvailab/fpc`
+- Wanda 运行副本：`/home/unix_ai/fpc`
 
-无人值守测试时遥控器/物理电机门控没有打开，所以软件无法代替现场的
-“打开遥控器并按释放键”动作。最终程序已经把这一步做成启动时的语音等待，
-不会在底盘没释放时提前听取水果指令。
+GitHub 只用于代码备份，不是机器人部署通道。机器人不会从 GitHub pull；部署由 5090
+当前仓库的 `scripts/deploy_to_robot.sh` 将已提交且干净的当前分支直接复制到 Wanda。
 
-这台机器人的 AIUI 只发布“正在识别”状态，没有发布识别文字，所以程序会自动使用机器人已经缓存好的本地 Whisper `base` 模型。第一次启动先加载几秒；等机器人真的说出“已经准备好”后，再在四秒内说水果名字。语音不会上传到网络。
+## 文档入口
 
-如果现场太吵，也可以用下面这条命令代替说话，视觉、导航和机械臂流程完全相同：
+- [当前状态](docs/CURRENT_STATUS.md)
+- [比赛阶段路线图](docs/ROADMAP.md)
+- [Stage 2/3 交接文档](docs/HANDOFF_STAGE23_20260823.md)
+- [Stage 2/3 待补接口](docs/STAGE23_PENDING_INTERFACES.md)
+- [Stage 1 当前 Pipeline](docs/STAGE1_PIPELINE.md)
+- [完整历史交接](docs/HANDOFF_20260822.md)
+- [工作日志](docs/WORKLOG.md)
+- [机器人问题记录](docs/ROBOT_ISSUES.md)
 
-```bash
-ros2 topic pub --once /fruit_test/command std_msgs/msg/String "{data: 香蕉}"
-```
-
-## 每块积木在哪
-
-- `main.py`：启动程序。
-- `mission.py`：任务顺序，最像“积木说明书”。
-- `voice.py`：把一句话变成水果名字。
-- `vision.py`：5090 书本 mask 接入和本地深度三维坐标。
-- `book_rpc.py`：5090 gRPC 请求与二维 mask 解析。
-- `book_geometry.py`：书本 mask、点云长短轴和固定吸取点。
-- `navigation.py`：转身、接近水果、返回原点。
-- `arm.py`：MoveIt 规划、轨迹执行和夹爪开合。
-- `config.py`：现场最常修改的数字和颜色范围。
-
-想换水果颜色，改 `config.py` 里的 `FRUITS`。想改变机器人离水果多远，改 `APPROACH_DISTANCE_M`。想改变夹爪中心位置，改 `TOOL_FROM_WRIST_XYZ`。
-
-视觉调试图保存在：
-
-```text
-/home/unix_ai/FruitTest/logs/last_detection.jpg
-```
-
-MoveIt 日志保存在：
-
-```text
-/home/unix_ai/FruitTest/logs/moveit.log
-```
-
-程序正常退出时会自动恢复原来的双臂遥控控制器。
+修改、部署和真机操作必须遵守仓库根目录 [AGENTS.md](AGENTS.md)。
